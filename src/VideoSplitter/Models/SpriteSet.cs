@@ -10,10 +10,14 @@ public sealed record SpriteSet(
     int Columns,
     int Rows,
     int Count,
-    int SheetCount);
+    int SheetCount,
+    int ValidFrameCount = 0);
 
 public sealed class SpriteMetaJson
 {
+    [JsonPropertyName("version")]
+    public int Version { get; set; } = 1;
+
     [JsonPropertyName("interval")]
     public double Interval { get; set; }
 
@@ -34,6 +38,9 @@ public sealed class SpriteMetaJson
 
     [JsonPropertyName("sheetCount")]
     public int SheetCount { get; set; }
+
+    [JsonPropertyName("validFrameCount")]
+    public int ValidFrameCount { get; set; }
 
     [JsonPropertyName("duration")]
     public double Duration { get; set; }

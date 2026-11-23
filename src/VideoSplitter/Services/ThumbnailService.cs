@@ -14,6 +14,7 @@ public sealed class ThumbnailService : IThumbnailService
     private const int GridRows = 10;
     private const int CellsPerSheet = GridColumns * GridRows;
     private const int MaxStderrLines = 20;
+    private const int CurrentMetaVersion = 2;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -21,11 +22,20 @@ public sealed class ThumbnailService : IThumbnailService
         WriteIndented = true
     };
 
+    private readonly record struct FfmpegPassStats(
+        int ExitCode,
+        int SheetsProduced,
+        int DecodedFrames,
+        int NonBlackFrames,
+        int TrailingBlackFrames,
+        string StderrTail);
+
     private readonly ICacheService _cacheService;
     private readonly IAppLogger _logger;
     private readonly string _ffmpegPath;
 
     public event EventHandler<int>? SheetReady;
+    public event EventHandler? SheetsReset;
 
     public ThumbnailService(ICacheService cacheService, IAppLogger logger)
     {
@@ -44,7 +54,7 @@ public sealed class ThumbnailService : IThumbnailService
             : 90;
         int thumbHeight = Math.Max(2, rawHeight % 2 == 0 ? rawHeight : rawHeight + 1);
 
-        int count = Math.Max(1, (int)Math.Floor(durationSeconds / intervalSeconds) + 1);
+        int count = Math.Max(1, (int)Math.Round(durationSeconds / intervalSeconds, MidpointRounding.AwayFromZero));
         int sheetCount = Math.Max(1, (int)Math.Ceiling(count / (double)CellsPerSheet));
         string directory = _cacheService.GetCacheDirectory(media.Path);
 
@@ -56,7 +66,8 @@ public sealed class ThumbnailService : IThumbnailService
             Columns: GridColumns,
             Rows: GridRows,
             Count: count,
-            SheetCount: sheetCount);
+            SheetCount: sheetCount,
+            ValidFrameCount: count);
     }
 
     public async Task<SpriteSet> GetOrCreateAsync(MediaInfo media, IProgress<double>? progress, CancellationToken ct)
@@ -86,15 +97,20 @@ public sealed class ThumbnailService : IThumbnailService
 
         try
         {
-            int actualSheetCount = await GenerateSpritesWithFallbackAsync(media, layout, progress, ct).ConfigureAwait(false);
-            SpriteSet finalLayout = layout with { SheetCount = actualSheetCount };
+            FfmpegPassStats stats = await GenerateSpritesWithFallbackAsync(media, layout, progress, ct).ConfigureAwait(false);
+            int validFrames = stats.DecodedFrames > 0 ? stats.DecodedFrames : layout.Count;
+            SpriteSet finalLayout = layout with
+            {
+                SheetCount = stats.SheetsProduced,
+                ValidFrameCount = validFrames
+            };
 
             await WriteMetadataAsync(media, finalLayout, ct).ConfigureAwait(false);
             progress?.Report(1.0);
 
             stopwatch.Stop();
             _logger.Info(
-                $"Vignettes generees en {stopwatch.Elapsed.TotalSeconds:F2} s ({actualSheetCount} feuille(s), intervalle {finalLayout.IntervalSeconds:0} s) : {finalLayout.Directory}");
+                $"Vignettes generees en {stopwatch.Elapsed.TotalSeconds:F2} s ({finalLayout.SheetCount} feuille(s), {finalLayout.ValidFrameCount}/{finalLayout.Count} image(s), intervalle {finalLayout.IntervalSeconds:0} s) : {finalLayout.Directory}");
 
             return finalLayout;
         }
@@ -125,14 +141,23 @@ public sealed class ThumbnailService : IThumbnailService
         {
             string json = File.ReadAllText(metaPath);
             SpriteMetaJson? meta = JsonSerializer.Deserialize<SpriteMetaJson>(json, JsonOptions);
-            if (meta is null || !meta.Complete || meta.Count <= 0 || meta.Cols <= 0 || meta.Rows <= 0)
+            if (meta is null
+                || meta.Version < CurrentMetaVersion
+                || !meta.Complete
+                || meta.Count <= 0
+                || meta.Cols <= 0
+                || meta.Rows <= 0
+                || meta.ThumbWidth != expectedLayout.ThumbWidth
+                || meta.ThumbHeight != expectedLayout.ThumbHeight)
             {
                 return false;
             }
 
+            int validFrames = meta.ValidFrameCount > 0 ? meta.ValidFrameCount : meta.Count;
+            int requiredFrameCells = Math.Min(meta.Count, validFrames);
             int expectedSheets = meta.SheetCount > 0
                 ? meta.SheetCount
-                : Math.Max(1, (int)Math.Ceiling(meta.Count / (double)(meta.Cols * meta.Rows)));
+                : Math.Max(1, (int)Math.Ceiling(requiredFrameCells / (double)(meta.Cols * meta.Rows)));
 
             for (int i = 0; i < expectedSheets; i++)
             {
@@ -147,12 +172,13 @@ public sealed class ThumbnailService : IThumbnailService
             cachedLayout = new SpriteSet(
                 Directory: expectedLayout.Directory,
                 IntervalSeconds: meta.Interval > 0 ? meta.Interval : expectedLayout.IntervalSeconds,
-                ThumbWidth: meta.ThumbWidth > 0 ? meta.ThumbWidth : expectedLayout.ThumbWidth,
-                ThumbHeight: meta.ThumbHeight > 0 ? meta.ThumbHeight : expectedLayout.ThumbHeight,
+                ThumbWidth: meta.ThumbWidth,
+                ThumbHeight: meta.ThumbHeight,
                 Columns: meta.Cols,
                 Rows: meta.Rows,
                 Count: meta.Count,
-                SheetCount: expectedSheets);
+                SheetCount: expectedSheets,
+                ValidFrameCount: validFrames);
             return true;
         }
         catch (Exception ex)
@@ -162,36 +188,71 @@ public sealed class ThumbnailService : IThumbnailService
         }
     }
 
-    private async Task<int> GenerateSpritesWithFallbackAsync(
+    private async Task<FfmpegPassStats> GenerateSpritesWithFallbackAsync(
         MediaInfo media,
         SpriteSet layout,
         IProgress<double>? progress,
         CancellationToken ct)
     {
-        (int exitCode, int sheetsProduced, string stderrTail) = await RunFfmpegPassAsync(
+        FfmpegPassStats pass1 = await RunFfmpegPassAsync(
             media, layout, useHwAccel: true, progress, ct).ConfigureAwait(false);
 
-        if (exitCode == 0 && sheetsProduced > 0)
+        if (IsPass1Acceptable(pass1, layout, out string reason))
         {
-            return sheetsProduced;
+            return pass1;
         }
 
         _logger.Warn(
-            $"FFmpeg vignettes avec -hwaccel auto a echoue (code {exitCode}). Nouvelle tentative sans acceleration materielle. Stderr : {stderrTail}");
+            $"FFmpeg vignettes avec -hwaccel auto rejete ({reason}). Nouvelle tentative en decodage logiciel CPU. Stderr : {pass1.StderrTail}");
 
-        (exitCode, sheetsProduced, stderrTail) = await RunFfmpegPassAsync(
+        SheetsReset?.Invoke(this, EventArgs.Empty);
+        progress?.Report(0.0);
+
+        FfmpegPassStats pass2 = await RunFfmpegPassAsync(
             media, layout, useHwAccel: false, progress, ct).ConfigureAwait(false);
 
-        if (exitCode != 0 || sheetsProduced == 0)
+        if (pass2.ExitCode != 0 || pass2.SheetsProduced == 0)
         {
             throw new InvalidOperationException(
-                $"FFmpeg a echoue (code {exitCode}) lors de la generation des vignettes. Dernieres lignes stderr : {stderrTail}");
+                $"FFmpeg a echoue (code {pass2.ExitCode}) lors de la generation des vignettes. Dernieres lignes stderr : {pass2.StderrTail}");
         }
 
-        return sheetsProduced;
+        return pass2;
     }
 
-    private async Task<(int ExitCode, int SheetsProduced, string StderrTail)> RunFfmpegPassAsync(
+    private static bool IsPass1Acceptable(FfmpegPassStats pass, SpriteSet layout, out string reason)
+    {
+        if (pass.ExitCode != 0 || pass.SheetsProduced == 0)
+        {
+            reason = $"code {pass.ExitCode}, {pass.SheetsProduced} feuille(s)";
+            return false;
+        }
+
+        if (pass.SheetsProduced < layout.SheetCount)
+        {
+            reason = $"feuilles incompletes ({pass.SheetsProduced}/{layout.SheetCount})";
+            return false;
+        }
+
+        if (pass.DecodedFrames > 0 && pass.DecodedFrames < Math.Max(1, layout.Count - 2))
+        {
+            reason = $"images decodees incompletes ({pass.DecodedFrames}/{layout.Count})";
+            return false;
+        }
+
+        if (pass.NonBlackFrames > 0
+            && pass.TrailingBlackFrames >= 5
+            && pass.TrailingBlackFrames >= pass.DecodedFrames / 3)
+        {
+            reason = $"suite d'images noires suspecte ({pass.TrailingBlackFrames}/{pass.DecodedFrames})";
+            return false;
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    private async Task<FfmpegPassStats> RunFfmpegPassAsync(
         MediaInfo media,
         SpriteSet layout,
         bool useHwAccel,
@@ -203,7 +264,12 @@ public sealed class ThumbnailService : IThumbnailService
         string[] args = BuildFfmpegArguments(media, layout, useHwAccel);
         var stderrLines = new Queue<string>(MaxStderrLines + 1);
         object stderrLock = new();
-        double totalMicros = Math.Max(1.0, media.Duration.TotalSeconds * 1_000_000.0);
+        double totalSeconds = Math.Max(0.1, media.Duration.TotalSeconds);
+        double totalMicros = totalSeconds * 1_000_000.0;
+
+        int decodedFrames = 0;
+        int nonBlackFrames = 0;
+        int trailingBlackFrames = 0;
 
         int emittedSheets = 0;
         using var pollCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -243,8 +309,12 @@ public sealed class ThumbnailService : IThumbnailService
 
             if (long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out long us) && us >= 0)
             {
-                double fraction = Math.Clamp(us / totalMicros, 0.0, 1.0);
-                progress?.Report(fraction);
+                // Ignorer les valeurs gonflees du filtre tile tant qu'aucune progression showinfo n'a besoin de bornage.
+                if (decodedFrames == 0)
+                {
+                    double fraction = Math.Clamp(us / totalMicros, 0.0, 0.99);
+                    progress?.Report(fraction);
+                }
             }
         }
 
@@ -252,6 +322,30 @@ public sealed class ThumbnailService : IThumbnailService
         {
             if (string.IsNullOrWhiteSpace(line))
             {
+                return;
+            }
+
+            if (line.Contains("Parsed_showinfo", StringComparison.Ordinal))
+            {
+                if (TryParseShowInfoFrame(line, out double ptsTime, out bool isSolidBlack))
+                {
+                    int currentCount = Interlocked.Increment(ref decodedFrames);
+                    if (isSolidBlack)
+                    {
+                        Interlocked.Increment(ref trailingBlackFrames);
+                    }
+                    else
+                    {
+                        Interlocked.Increment(ref nonBlackFrames);
+                        Interlocked.Exchange(ref trailingBlackFrames, 0);
+                    }
+
+                    double frameFraction = layout.Count > 0 ? currentCount / (double)layout.Count : 0.0;
+                    double timeFraction = ptsTime > 0 ? ptsTime / totalSeconds : frameFraction;
+                    double fraction = Math.Clamp(Math.Max(frameFraction, timeFraction), 0.0, 0.99);
+                    progress?.Report(fraction);
+                }
+
                 return;
             }
 
@@ -303,15 +397,88 @@ public sealed class ThumbnailService : IThumbnailService
             stderrTail = string.Join(" | ", stderrLines);
         }
 
-        return (result.ExitCode, finalSheetCount, stderrTail);
+        return new FfmpegPassStats(
+            ExitCode: result.ExitCode,
+            SheetsProduced: finalSheetCount,
+            DecodedFrames: Volatile.Read(ref decodedFrames),
+            NonBlackFrames: Volatile.Read(ref nonBlackFrames),
+            TrailingBlackFrames: Volatile.Read(ref trailingBlackFrames),
+            StderrTail: stderrTail);
+    }
+
+    private static bool TryParseShowInfoFrame(string line, out double ptsTime, out bool isSolidBlack)
+    {
+        ptsTime = 0.0;
+        isSolidBlack = false;
+
+        int meanMarkerIndex = line.IndexOf("mean:[", StringComparison.Ordinal);
+        if (meanMarkerIndex < 0)
+        {
+            return false;
+        }
+
+        int ptsIdx = line.IndexOf("pts_time:", StringComparison.Ordinal);
+        if (ptsIdx >= 0)
+        {
+            ReadOnlySpan<char> ptsSpan = line.AsSpan(ptsIdx + "pts_time:".Length).TrimStart();
+            int endIdx = ptsSpan.IndexOf(' ');
+            if (endIdx > 0)
+            {
+                ptsSpan = ptsSpan[..endIdx];
+            }
+
+            if (double.TryParse(ptsSpan, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsedPts)
+                && double.IsFinite(parsedPts)
+                && parsedPts >= 0)
+            {
+                ptsTime = parsedPts;
+            }
+        }
+
+        if (!TryParseFirstBracketFloat(line.AsSpan(meanMarkerIndex + "mean:[".Length), out double meanY))
+        {
+            return false;
+        }
+
+        int stdevMarkerIndex = line.IndexOf("stdev:[", meanMarkerIndex, StringComparison.Ordinal);
+        if (stdevMarkerIndex < 0)
+        {
+            return false;
+        }
+
+        if (!TryParseFirstBracketFloat(line.AsSpan(stdevMarkerIndex + "stdev:[".Length), out double stdevY))
+        {
+            return false;
+        }
+
+        isSolidBlack = meanY <= 18.0 && stdevY <= 2.0;
+        return true;
+    }
+
+    private static bool TryParseFirstBracketFloat(ReadOnlySpan<char> span, out double value)
+    {
+        value = 0.0;
+        span = span.TrimStart();
+        int sepIdx = span.IndexOfAny(' ', ']', '\t');
+        if (sepIdx <= 0)
+        {
+            return false;
+        }
+
+        return double.TryParse(span[..sepIdx], NumberStyles.Float, CultureInfo.InvariantCulture, out value)
+            && double.IsFinite(value);
     }
 
     private static string[] BuildFfmpegArguments(MediaInfo media, SpriteSet layout, bool useHwAccel)
     {
-        var args = new List<string>(20)
+        var args = new List<string>(24)
         {
             "-hide_banner",
-            "-y"
+            "-y",
+            "-fflags",
+            useHwAccel ? "+discardcorrupt" : "+genpts+discardcorrupt",
+            "-err_detect",
+            "ignore_err"
         };
 
         if (media.Duration.TotalSeconds > 600.0)
@@ -320,13 +487,15 @@ public sealed class ThumbnailService : IThumbnailService
             args.Add("nokey");
         }
 
-        args.Add("-threads");
-        args.Add("2");
-
         if (useHwAccel)
         {
             args.Add("-hwaccel");
             args.Add("auto");
+        }
+        else
+        {
+            args.Add("-threads");
+            args.Add("2");
         }
 
         string intervalText = ((int)layout.IntervalSeconds).ToString(CultureInfo.InvariantCulture);
@@ -338,7 +507,7 @@ public sealed class ThumbnailService : IThumbnailService
         args.Add("-sn");
         args.Add("-dn");
         args.Add("-vf");
-        args.Add($"fps=1/{intervalText},scale=160:-2,tile=10x10");
+        args.Add($"fps=1/{intervalText},scale=160:-2,showinfo,tile=10x10:color=0x22262E");
         args.Add("-q:v");
         args.Add("5");
         args.Add("-start_number");
@@ -361,6 +530,7 @@ public sealed class ThumbnailService : IThumbnailService
     {
         var meta = new SpriteMetaJson
         {
+            Version = CurrentMetaVersion,
             Interval = layout.IntervalSeconds,
             ThumbWidth = layout.ThumbWidth,
             ThumbHeight = layout.ThumbHeight,
@@ -368,6 +538,7 @@ public sealed class ThumbnailService : IThumbnailService
             Rows = layout.Rows,
             Count = layout.Count,
             SheetCount = layout.SheetCount,
+            ValidFrameCount = layout.ValidFrameCount > 0 ? layout.ValidFrameCount : layout.Count,
             Duration = media.Duration.TotalSeconds,
             Complete = true
         };

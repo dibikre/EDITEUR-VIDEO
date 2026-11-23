@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
+using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
@@ -17,6 +18,8 @@ namespace VideoSplitter.Views;
 
 public partial class MainWindow : Window
 {
+    private const double StartupScreenRatio = 0.97;
+
     private static readonly FilePickerFileType VideoFileType = new("Fichiers vidéo")
     {
         Patterns = ["*.mp4", "*.mkv", "*.mov", "*.avi", "*.webm", "*.m4v", "*.ts", "*.wmv", "*.flv", "*.mpg"]
@@ -29,6 +32,7 @@ public partial class MainWindow : Window
     private bool _isClosingAfterExportCancel;
     private bool _isClosingPromptOpen;
     private bool _isPortraitLayout;
+    private bool _startupBoundsApplied;
 
     public MainWindow()
     {
@@ -45,6 +49,7 @@ public partial class MainWindow : Window
         _mediaPlayer = mediaPlayer;
         _logger = logger;
 
+        ApplyStartupWindowBounds();
         ConfigureBridges();
 
         Opened += OnWindowOpened;
@@ -132,6 +137,11 @@ public partial class MainWindow : Window
 
     private void OnWindowOpened(object? sender, EventArgs e)
     {
+        if (!_startupBoundsApplied)
+        {
+            ApplyStartupWindowBounds();
+        }
+
         if (LecteurVideoView.MediaPlayer is null)
         {
             LecteurVideoView.MediaPlayer = _mediaPlayer;
@@ -139,6 +149,51 @@ public partial class MainWindow : Window
         }
 
         ApplyResponsiveLayout(_viewModel.Player.IsPortraitVideo);
+    }
+
+    private void ApplyStartupWindowBounds()
+    {
+        if (Design.IsDesignMode)
+        {
+            return;
+        }
+
+        Screen? screen = Screens.ScreenFromWindow(this) ?? Screens.Primary;
+        if (screen is null)
+        {
+            return;
+        }
+
+        PixelRect workingArea = screen.WorkingArea.Width > 0 && screen.WorkingArea.Height > 0
+            ? screen.WorkingArea
+            : screen.Bounds;
+        if (workingArea.Width <= 0 || workingArea.Height <= 0)
+        {
+            return;
+        }
+
+        double scaling = screen.Scaling > 0 ? screen.Scaling : 1.0;
+        double maxDipWidth = workingArea.Width / scaling;
+        double maxDipHeight = workingArea.Height / scaling;
+
+        double targetDipWidth = Math.Round(maxDipWidth * StartupScreenRatio);
+        double targetDipHeight = Math.Round(maxDipHeight * StartupScreenRatio);
+
+        double finalDipWidth = Math.Clamp(targetDipWidth, Math.Min(MinWidth, maxDipWidth), maxDipWidth);
+        double finalDipHeight = Math.Clamp(targetDipHeight, Math.Min(MinHeight, maxDipHeight), maxDipHeight);
+
+        WindowState = WindowState.Normal;
+        Width = finalDipWidth;
+        Height = finalDipHeight;
+
+        int pixelWidth = (int)Math.Round(finalDipWidth * scaling);
+        int pixelHeight = (int)Math.Round(finalDipHeight * scaling);
+        int posX = workingArea.X + Math.Max(0, (workingArea.Width - pixelWidth) / 2);
+        int posY = workingArea.Y + Math.Max(0, (workingArea.Height - pixelHeight) / 2);
+
+        WindowStartupLocation = WindowStartupLocation.Manual;
+        Position = new PixelPoint(posX, posY);
+        _startupBoundsApplied = true;
     }
 
     protected override void OnClosing(WindowClosingEventArgs e)

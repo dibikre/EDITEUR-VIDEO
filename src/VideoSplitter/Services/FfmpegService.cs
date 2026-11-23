@@ -523,6 +523,12 @@ public sealed class FfmpegService : IFfmpegService
         JsonElement vs = videoStream.Value;
         int width = GetInt(vs, "width");
         int height = GetInt(vs, "height");
+        int rotationDegrees = GetStreamRotationDegrees(vs);
+        if (Math.Abs(rotationDegrees) % 180 == 90 && width > 0 && height > 0)
+        {
+            (width, height) = (height, width);
+        }
+
         string videoCodec = GetString(vs, "codec_name") ?? "inconnu";
 
         double fps = ParseFraction(GetString(vs, "avg_frame_rate"));
@@ -589,6 +595,51 @@ public sealed class FfmpegService : IFfmpegService
             JsonValueKind.String when int.TryParse(prop.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) => parsed,
             _ => 0
         };
+    }
+
+    private static int GetStreamRotationDegrees(JsonElement videoStream)
+    {
+        if (videoStream.TryGetProperty("side_data_list", out JsonElement sideDataList)
+            && sideDataList.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement item in sideDataList.EnumerateArray())
+            {
+                int rot = GetRoundedRotation(item, "rotation");
+                if (rot != 0)
+                {
+                    return rot;
+                }
+            }
+        }
+
+        if (videoStream.TryGetProperty("tags", out JsonElement tags)
+            && tags.ValueKind == JsonValueKind.Object)
+        {
+            int rot = GetRoundedRotation(tags, "rotate");
+            if (rot != 0)
+            {
+                return rot;
+            }
+        }
+
+        return 0;
+    }
+
+    private static int GetRoundedRotation(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out JsonElement prop))
+        {
+            return 0;
+        }
+
+        double value = prop.ValueKind switch
+        {
+            JsonValueKind.Number when prop.TryGetDouble(out double d) => d,
+            JsonValueKind.String when double.TryParse(prop.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed) => parsed,
+            _ => 0
+        };
+
+        return double.IsFinite(value) ? (int)Math.Round(value) : 0;
     }
 
     private static double ParsePositiveDouble(string? text)

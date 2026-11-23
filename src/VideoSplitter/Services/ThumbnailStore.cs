@@ -9,17 +9,19 @@ namespace VideoSplitter.Services;
 
 public sealed class ThumbnailStore : IThumbnailProvider
 {
-    private readonly SpriteSet _layout;
     private readonly IThumbnailService _thumbnailService;
     private readonly IAppLogger _logger;
-    private readonly Bitmap?[] _sheets;
+    private readonly object _sheetsLock = new();
 
+    private SpriteSet _layout;
+    private Bitmap?[] _sheets;
     private int _loadedSheetCount;
+    private int _sheetGeneration;
     private int _lastIndex = -1;
     private CroppedBitmap? _lastCrop;
     private bool _disposed;
 
-    public SpriteSet Layout => _layout;
+    public SpriteSet Layout => Volatile.Read(ref _layout);
     public bool IsReady => Volatile.Read(ref _loadedSheetCount) > 0;
 
     public event EventHandler? ThumbnailsChanged;
@@ -32,44 +34,197 @@ public sealed class ThumbnailStore : IThumbnailProvider
         _sheets = new Bitmap?[Math.Max(1, layout.SheetCount)];
 
         _thumbnailService.SheetReady += OnSheetReady;
+        _thumbnailService.SheetsReset += OnSheetsReset;
+    }
+
+    public void UpdateLayout(SpriteSet finalLayout, bool reloadMissingOrUpdated = true)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        int newLength = Math.Max(1, finalLayout.SheetCount);
+        List<Bitmap>? toDispose = null;
+
+        lock (_sheetsLock)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            Volatile.Write(ref _layout, finalLayout);
+
+            if (_sheets.Length != newLength)
+            {
+                var resized = new Bitmap?[newLength];
+                int copyLen = Math.Min(_sheets.Length, newLength);
+                for (int i = 0; i < copyLen; i++)
+                {
+                    resized[i] = _sheets[i];
+                }
+
+                for (int i = newLength; i < _sheets.Length; i++)
+                {
+                    if (_sheets[i] is { } extra)
+                    {
+                        toDispose ??= [];
+                        toDispose.Add(extra);
+                    }
+                }
+
+                _sheets = resized;
+                int loaded = 0;
+                for (int i = 0; i < _sheets.Length; i++)
+                {
+                    if (_sheets[i] is not null)
+                    {
+                        loaded++;
+                    }
+                }
+
+                Volatile.Write(ref _loadedSheetCount, loaded);
+            }
+
+            _lastIndex = -1;
+            _lastCrop = null;
+        }
+
+        DisposeOnUiThread(toDispose);
+
+        if (reloadMissingOrUpdated)
+        {
+            int gen = Volatile.Read(ref _sheetGeneration);
+            for (int i = 0; i < newLength; i++)
+            {
+                int idx = i;
+                _ = Task.Run(() => LoadSheet(idx, forceReload: false, expectedGeneration: gen));
+            }
+        }
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (!_disposed)
+            {
+                ThumbnailsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        });
+    }
+
+    private void OnSheetsReset(object? sender, EventArgs e)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        List<Bitmap>? toDispose = null;
+        lock (_sheetsLock)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            Interlocked.Increment(ref _sheetGeneration);
+
+            for (int i = 0; i < _sheets.Length; i++)
+            {
+                if (_sheets[i] is { } existing)
+                {
+                    toDispose ??= [];
+                    toDispose.Add(existing);
+                    _sheets[i] = null;
+                }
+            }
+
+            Volatile.Write(ref _loadedSheetCount, 0);
+            _lastIndex = -1;
+            _lastCrop = null;
+        }
+
+        DisposeOnUiThread(toDispose);
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (!_disposed)
+            {
+                ThumbnailsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        });
     }
 
     private void OnSheetReady(object? sender, int sheetIndex)
     {
-        if (_disposed || sheetIndex < 0 || sheetIndex >= _sheets.Length)
+        if (_disposed)
         {
             return;
         }
 
-        _ = Task.Run(() => LoadSheet(sheetIndex));
+        int gen = Volatile.Read(ref _sheetGeneration);
+        _ = Task.Run(() => LoadSheet(sheetIndex, forceReload: true, expectedGeneration: gen));
     }
 
-    private void LoadSheet(int sheetIndex)
+    private void LoadSheet(int sheetIndex, bool forceReload, int expectedGeneration)
     {
-        if (_disposed || Volatile.Read(ref _sheets[sheetIndex]) is not null)
+        SpriteSet layout = Layout;
+        lock (_sheetsLock)
         {
-            return;
+            if (_disposed
+                || expectedGeneration != Volatile.Read(ref _sheetGeneration)
+                || sheetIndex < 0
+                || sheetIndex >= _sheets.Length)
+            {
+                return;
+            }
+
+            if (!forceReload && _sheets[sheetIndex] is not null)
+            {
+                return;
+            }
         }
 
-        string path = Path.Combine(_layout.Directory, $"sprite_{sheetIndex:D3}.jpg");
+        string path = Path.Combine(layout.Directory, $"sprite_{sheetIndex:D3}.jpg");
         if (!File.Exists(path))
         {
             return;
         }
 
+        Bitmap? bitmap = null;
+        Bitmap? previous = null;
+
         try
         {
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            var bitmap = new Bitmap(stream);
+            bitmap = new Bitmap(stream);
 
-            if (_disposed)
+            lock (_sheetsLock)
             {
-                bitmap.Dispose();
-                return;
+                if (_disposed
+                    || expectedGeneration != Volatile.Read(ref _sheetGeneration)
+                    || sheetIndex < 0
+                    || sheetIndex >= _sheets.Length)
+                {
+                    bitmap.Dispose();
+                    return;
+                }
+
+                previous = _sheets[sheetIndex];
+                _sheets[sheetIndex] = bitmap;
+                if (previous is null)
+                {
+                    Interlocked.Increment(ref _loadedSheetCount);
+                }
+
+                _lastIndex = -1;
+                _lastCrop = null;
             }
 
-            Volatile.Write(ref _sheets[sheetIndex], bitmap);
-            Interlocked.Increment(ref _loadedSheetCount);
+            if (previous is not null)
+            {
+                DisposeOnUiThread([previous]);
+            }
+
             Dispatcher.UIThread.Post(() =>
             {
                 if (!_disposed)
@@ -80,65 +235,70 @@ public sealed class ThumbnailStore : IThumbnailProvider
         }
         catch (Exception ex)
         {
+            bitmap?.Dispose();
             _logger.Warn($"Impossible de charger la feuille de vignettes {path} : {ex.Message}");
         }
     }
 
     public int IndexForTime(TimeSpan time)
     {
-        if (_layout.Count <= 0 || _layout.IntervalSeconds <= 0)
+        SpriteSet layout = Layout;
+        if (layout.Count <= 0 || layout.IntervalSeconds <= 0)
         {
             return 0;
         }
 
-        int rawIndex = (int)Math.Floor(time.TotalSeconds / _layout.IntervalSeconds);
-        return Math.Clamp(rawIndex, 0, _layout.Count - 1);
+        int rawIndex = (int)Math.Floor(time.TotalSeconds / layout.IntervalSeconds);
+        return Math.Clamp(rawIndex, 0, layout.Count - 1);
     }
 
     public IImage? GetThumbnail(TimeSpan time)
     {
-        if (_disposed || _layout.Count <= 0 || _layout.IntervalSeconds <= 0)
+        SpriteSet layout = Layout;
+        if (_disposed || layout.Count <= 0 || layout.IntervalSeconds <= 0)
         {
             return null;
         }
 
         int index = IndexForTime(time);
+        int validLimit = GetValidLimit(layout);
+        if (validLimit <= 0 || (validLimit < layout.Count - 1 && index >= validLimit))
+        {
+            return null;
+        }
+
+        index = Math.Clamp(index, 0, validLimit - 1);
 
         if (index == _lastIndex && _lastCrop is not null)
         {
             return _lastCrop;
         }
 
-        int perSheet = _layout.Columns * _layout.Rows;
+        int perSheet = layout.Columns * layout.Rows;
         if (perSheet <= 0)
         {
             return null;
         }
 
         int sheetIndex = index / perSheet;
-        if (sheetIndex < 0 || sheetIndex >= _sheets.Length)
-        {
-            return null;
-        }
-
-        Bitmap? sheet = Volatile.Read(ref _sheets[sheetIndex]);
+        Bitmap? sheet = GetSheetSnapshot(sheetIndex);
         if (sheet is null)
         {
             return null;
         }
 
         int cell = index % perSheet;
-        int col = cell % _layout.Columns;
-        int row = cell / _layout.Columns;
+        int col = cell % layout.Columns;
+        int row = cell / layout.Columns;
 
-        int x = col * _layout.ThumbWidth;
-        int y = row * _layout.ThumbHeight;
-        if (x + _layout.ThumbWidth > sheet.PixelSize.Width || y + _layout.ThumbHeight > sheet.PixelSize.Height)
+        int x = col * layout.ThumbWidth;
+        int y = row * layout.ThumbHeight;
+        if (x + layout.ThumbWidth > sheet.PixelSize.Width || y + layout.ThumbHeight > sheet.PixelSize.Height)
         {
             return null;
         }
 
-        var crop = new CroppedBitmap(sheet, new PixelRect(x, y, _layout.ThumbWidth, _layout.ThumbHeight));
+        var crop = new CroppedBitmap(sheet, new PixelRect(x, y, layout.ThumbWidth, layout.ThumbHeight));
         _lastIndex = index;
         _lastCrop = crop;
         return crop;
@@ -149,40 +309,74 @@ public sealed class ThumbnailStore : IThumbnailProvider
         sheet = null;
         sourceRect = default;
 
-        if (_disposed || _layout.Count <= 0 || _layout.Columns <= 0 || _layout.Rows <= 0)
+        SpriteSet layout = Layout;
+        if (_disposed || layout.Count <= 0 || layout.Columns <= 0 || layout.Rows <= 0)
         {
             return false;
         }
 
-        index = Math.Clamp(index, 0, _layout.Count - 1);
+        int validLimit = GetValidLimit(layout);
+        if (validLimit <= 0 || (validLimit < layout.Count - 1 && index >= validLimit))
+        {
+            return false;
+        }
 
-        int perSheet = _layout.Columns * _layout.Rows;
+        index = Math.Clamp(index, 0, validLimit - 1);
+
+        int perSheet = layout.Columns * layout.Rows;
         int sheetIndex = index / perSheet;
-        if (sheetIndex < 0 || sheetIndex >= _sheets.Length)
-        {
-            return false;
-        }
-
-        Bitmap? bitmap = Volatile.Read(ref _sheets[sheetIndex]);
+        Bitmap? bitmap = GetSheetSnapshot(sheetIndex);
         if (bitmap is null)
         {
             return false;
         }
 
         int cell = index % perSheet;
-        int col = cell % _layout.Columns;
-        int row = cell / _layout.Columns;
+        int col = cell % layout.Columns;
+        int row = cell / layout.Columns;
 
-        int x = col * _layout.ThumbWidth;
-        int y = row * _layout.ThumbHeight;
-        if (x + _layout.ThumbWidth > bitmap.PixelSize.Width || y + _layout.ThumbHeight > bitmap.PixelSize.Height)
+        int x = col * layout.ThumbWidth;
+        int y = row * layout.ThumbHeight;
+        if (x + layout.ThumbWidth > bitmap.PixelSize.Width || y + layout.ThumbHeight > bitmap.PixelSize.Height)
         {
             return false;
         }
 
         sheet = bitmap;
-        sourceRect = new Rect(x, y, _layout.ThumbWidth, _layout.ThumbHeight);
+        sourceRect = new Rect(x, y, layout.ThumbWidth, layout.ThumbHeight);
         return true;
+    }
+
+    private Bitmap? GetSheetSnapshot(int sheetIndex)
+    {
+        lock (_sheetsLock)
+        {
+            if (_disposed || sheetIndex < 0 || sheetIndex >= _sheets.Length)
+            {
+                return null;
+            }
+
+            return _sheets[sheetIndex];
+        }
+    }
+
+    private static int GetValidLimit(SpriteSet layout)
+        => layout.ValidFrameCount > 0 ? Math.Min(layout.ValidFrameCount, layout.Count) : layout.Count;
+
+    private static void DisposeOnUiThread(List<Bitmap>? bitmaps)
+    {
+        if (bitmaps is null || bitmaps.Count == 0)
+        {
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            foreach (Bitmap bmp in bitmaps)
+            {
+                bmp.Dispose();
+            }
+        });
     }
 
     public void Dispose()
@@ -194,12 +388,36 @@ public sealed class ThumbnailStore : IThumbnailProvider
 
         _disposed = true;
         _thumbnailService.SheetReady -= OnSheetReady;
-        _lastCrop = null;
+        _thumbnailService.SheetsReset -= OnSheetsReset;
 
-        for (int i = 0; i < _sheets.Length; i++)
+        List<Bitmap>? toDispose = null;
+        lock (_sheetsLock)
         {
-            Bitmap? sheet = Interlocked.Exchange(ref _sheets[i], null);
-            sheet?.Dispose();
+            _lastCrop = null;
+            for (int i = 0; i < _sheets.Length; i++)
+            {
+                if (_sheets[i] is { } sheet)
+                {
+                    toDispose ??= [];
+                    toDispose.Add(sheet);
+                    _sheets[i] = null;
+                }
+            }
+        }
+
+        if (toDispose is not null)
+        {
+            if (Dispatcher.UIThread.CheckAccess())
+            {
+                foreach (Bitmap bmp in toDispose)
+                {
+                    bmp.Dispose();
+                }
+            }
+            else
+            {
+                DisposeOnUiThread(toDispose);
+            }
         }
     }
 }

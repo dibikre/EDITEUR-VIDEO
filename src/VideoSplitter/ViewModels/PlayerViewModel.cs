@@ -285,10 +285,11 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
                 ThumbnailStatus = $"Vignettes : {percent} %";
             });
 
-            await Task.Run(() => _thumbnailService.GetOrCreateAsync(info, progress, cts.Token), cts.Token);
+            SpriteSet finalLayout = await Task.Run(() => _thumbnailService.GetOrCreateAsync(info, progress, cts.Token), cts.Token);
 
             if (!cts.IsCancellationRequested && !_disposed)
             {
+                store.UpdateLayout(finalLayout);
                 ThumbnailProgress = 1.0;
                 ThumbnailStatus = "Vignettes pretes";
             }
