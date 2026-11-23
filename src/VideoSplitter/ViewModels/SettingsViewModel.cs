@@ -23,6 +23,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsSameAsSourceFolder))]
     [NotifyPropertyChangedFor(nameof(IsCustomOutputFolder))]
+    [NotifyPropertyChangedFor(nameof(IsOverwriteSource))]
     [NotifyPropertyChangedFor(nameof(CustomFolderDisplay))]
     [NotifyPropertyChangedFor(nameof(ExportSummaryText))]
     private OutputFolderMode _outputFolderMode = OutputFolderMode.SameAsSource;
@@ -83,6 +84,18 @@ public sealed partial class SettingsViewModel : ObservableObject
         }
     }
 
+    public bool IsOverwriteSource
+    {
+        get => OutputFolderMode == OutputFolderMode.OverwriteSource;
+        set
+        {
+            if (value)
+            {
+                OutputFolderMode = OutputFolderMode.OverwriteSource;
+            }
+        }
+    }
+
     public string CustomFolderDisplay => string.IsNullOrWhiteSpace(CustomOutputFolder)
         ? "Aucun dossier sélectionné"
         : CustomOutputFolder;
@@ -92,9 +105,12 @@ public sealed partial class SettingsViewModel : ObservableObject
         get
         {
             string modeLabel = ExportMode == ExportMode.Fast ? "Mode Rapide" : "Mode Précis";
-            string folderLabel = OutputFolderMode == OutputFolderMode.CustomFolder && !string.IsNullOrWhiteSpace(CustomOutputFolder)
-                ? CustomOutputFolder
-                : "Même dossier que la source";
+            string folderLabel = OutputFolderMode switch
+            {
+                OutputFolderMode.CustomFolder when !string.IsNullOrWhiteSpace(CustomOutputFolder) => CustomOutputFolder,
+                OutputFolderMode.OverwriteSource => "Écraser la vidéo source",
+                _ => "Même dossier que la source"
+            };
             return $"{modeLabel} · Sortie : {folderLabel}";
         }
     }
@@ -175,6 +191,7 @@ public sealed partial class SettingsViewModel : ObservableObject
                 OutputFolderMode = OutputFolderMode.SameAsSource;
                 OnPropertyChanged(nameof(IsSameAsSourceFolder));
                 OnPropertyChanged(nameof(IsCustomOutputFolder));
+                OnPropertyChanged(nameof(IsOverwriteSource));
             }
         }
         finally

@@ -3,7 +3,8 @@ namespace VideoSplitter.Models;
 public enum OutputFolderMode
 {
     SameAsSource,
-    CustomFolder
+    CustomFolder,
+    OverwriteSource
 }
 
 public sealed class AppSettings

@@ -8,6 +8,7 @@ namespace VideoSplitter.ViewModels;
 public sealed partial class MainViewModel : ObservableObject, IDisposable
 {
     private readonly IAppLogger _logger;
+    private bool _isReloadingAfterOverwrite;
 
     public PlayerViewModel Player { get; }
     public TimelineViewModel Timeline { get; }
@@ -37,6 +38,20 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
         Export.Mode = Settings.ExportMode;
         Export.ConfigureOutputLocation(Settings.OutputFolderMode, Settings.CustomOutputFolder);
+        Export.ConfigureOverwriteHooks(
+            prepareOverwriteReleaseAsync: () => Player.ReleaseMediaForOverwriteAsync(),
+            reloadAfterOverwriteAsync: async path =>
+            {
+                _isReloadingAfterOverwrite = true;
+                try
+                {
+                    await Player.ReloadAfterOverwriteAsync(path);
+                }
+                finally
+                {
+                    _isReloadingAfterOverwrite = false;
+                }
+            });
 
         Edit.ConfigurePlaybackBridge(
             () => (Player.Position, Timeline.PixelsPerSecond),
@@ -79,7 +94,14 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             if (Player.MediaInfo is { } openedMedia)
             {
                 Edit.OnVideoOpened(openedMedia);
-                Export.OnVideoOpened(openedMedia);
+                if (_isReloadingAfterOverwrite)
+                {
+                    Export.UpdateCurrentMediaWithoutReset(openedMedia);
+                }
+                else
+                {
+                    Export.OnVideoOpened(openedMedia);
+                }
             }
         }
     }
@@ -89,7 +111,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         if (e.PropertyName == nameof(EditViewModel.Segments))
         {
             Export.NotifySegmentsChanged();
-            Export.ClearTransientErrorState();
+            if (!_isReloadingAfterOverwrite)
+            {
+                Export.ClearTransientErrorState();
+            }
         }
     }
 

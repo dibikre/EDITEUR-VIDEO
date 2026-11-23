@@ -63,6 +63,8 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
     private Func<string, Task<bool>>? _confirmContinuePrompt;
     private Func<string, Task>? _errorPrompt;
     private Func<string, Task>? _copyTextAction;
+    private Func<Task>? _prepareOverwriteReleaseAsync;
+    private Func<string, Task>? _reloadAfterOverwriteAsync;
 
     private CancellationTokenSource? _encoderDetectCts;
     private CancellationTokenSource? _exportCts;
@@ -175,6 +177,15 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
                 sampleSegment = segments[0];
             }
 
+            if (_outputFolderMode == OutputFolderMode.OverwriteSource)
+            {
+                string effectiveExt = ExportPlanner.ResolveOutputExtension(sourceExt, Mode);
+                string targetFileName = string.Equals(effectiveExt, sourceExt, StringComparison.OrdinalIgnoreCase)
+                    ? (media is not null ? Path.GetFileName(media.Path) : "video.mp4")
+                    : $"{sourceName}{effectiveExt}";
+                return $"Remplacement de la source : {targetFileName}";
+            }
+
             string stem = ExportPlanner.BuildFileName(
                 FileNamePattern,
                 sourceName,
@@ -213,11 +224,20 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
         _copyTextAction = copyTextAction;
     }
 
+    public void ConfigureOverwriteHooks(
+        Func<Task> prepareOverwriteReleaseAsync,
+        Func<string, Task> reloadAfterOverwriteAsync)
+    {
+        _prepareOverwriteReleaseAsync = prepareOverwriteReleaseAsync;
+        _reloadAfterOverwriteAsync = reloadAfterOverwriteAsync;
+    }
+
     public void ConfigureOutputLocation(OutputFolderMode folderMode, string customFolder)
     {
         _outputFolderMode = folderMode;
         _customOutputFolder = customFolder?.Trim() ?? string.Empty;
         OutputFolder = ResolveTargetOutputFolder(_currentMedia);
+        OnPropertyChanged(nameof(PreviewFileName));
     }
 
     public void OnVideoOpened(MediaInfo media)
@@ -230,6 +250,13 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
         GlobalProgress = 0.0;
         Items.Clear();
         _lastExportedFiles.Clear();
+        NotifySegmentsChanged();
+    }
+
+    public void UpdateCurrentMediaWithoutReset(MediaInfo media)
+    {
+        _currentMedia = media;
+        OutputFolder = ResolveTargetOutputFolder(media);
         NotifySegmentsChanged();
     }
 
@@ -377,6 +404,17 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
             return;
         }
 
+        bool isOverwriteSource = _outputFolderMode == OutputFolderMode.OverwriteSource;
+        if (isOverwriteSource && outputType == ExportOutputType.SeparateSegments && enabledSegments.Count > 1)
+        {
+            if (_errorPrompt is not null)
+            {
+                await _errorPrompt.Invoke(
+                    "L'option « Écraser la vidéo source » ne peut remplacer le fichier d'origine que par une seule vidéo.\n\nUtilisez « Exporter en une seule vidéo » ou n'incluez qu'un seul segment.");
+            }
+            return;
+        }
+
         HasExportErrors = false;
         string targetFolder = OutputFolder.Trim();
 
@@ -399,7 +437,7 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
         (EncoderKind resolvedEncoder, bool allowCpuFallback) = ResolveEncoderChoice();
         HashSet<Guid>? preciseOverrideIds = null;
         ExportMode batchDefaultMode = Mode;
-        bool allowPerSegmentPrecise = outputType == ExportOutputType.SeparateSegments;
+        bool allowPerSegmentPrecise = outputType == ExportOutputType.SeparateSegments && !isOverwriteSource;
 
         if (Mode == ExportMode.Fast)
         {
@@ -455,7 +493,7 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
             }
         }
 
-        if (outputType == ExportOutputType.SingleVideo)
+        if (outputType == ExportOutputType.SingleVideo || (isOverwriteSource && enabledSegments.Count == 1))
         {
             await PrepareAndExecuteSingleVideoAsync(
                 media,
@@ -463,7 +501,8 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
                 keyframesSnapshot,
                 batchDefaultMode,
                 resolvedEncoder,
-                allowCpuFallback);
+                allowCpuFallback,
+                isOverwriteSource);
             return;
         }
 
@@ -516,36 +555,60 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
         IReadOnlyList<double> keyframesSnapshot,
         ExportMode effectiveMode,
         EncoderKind resolvedEncoder,
-        bool allowCpuFallback)
+        bool allowCpuFallback,
+        bool isOverwriteSource)
     {
-        string sourceName = Path.GetFileNameWithoutExtension(media.Path);
-        string sourceExt = Path.GetExtension(media.Path);
-        string outputPath = ExportPlanner.BuildSingleVideoOutputPath(
-            OutputFolder,
-            FileNamePattern,
-            sourceName,
-            sourceExt,
-            enabledSegments,
-            effectiveMode);
-
         long requiredBytes = ExportPlanner.EstimateRequiredBytes(media, enabledSegments);
         if (!await CheckDiskSpaceAsync(requiredBytes, effectiveMode == ExportMode.Precise))
         {
             return;
         }
 
+        string outputPath;
+        string? overwriteSourcePath = null;
+        string? overwriteFinalPath = null;
         bool isSkipped = false;
-        if (File.Exists(outputPath))
+
+        if (isOverwriteSource)
         {
-            ConflictPolicy? policy = _conflictPrompt is not null
-                ? await _conflictPrompt.Invoke([outputPath])
-                : ConflictPolicy.AutoRename;
-            if (policy is null)
+            (string stagingPath, string finalOverwritePath) = ExportPlanner.BuildOverwritePaths(media.Path, effectiveMode);
+            string confirmMessage = string.Equals(finalOverwritePath, media.Path, StringComparison.OrdinalIgnoreCase)
+                ? $"La vidéo source va être définitivement remplacée par la vidéo exportée :\n{media.Path}\n\nVoulez-vous continuer ?"
+                : $"La vidéo source va être définitivement remplacée par la vidéo exportée (conversion vers {Path.GetExtension(finalOverwritePath)}) :\n{media.Path}\n→ {finalOverwritePath}\n\nVoulez-vous continuer ?";
+
+            if (_confirmContinuePrompt is not null && !await _confirmContinuePrompt.Invoke(confirmMessage))
             {
                 return;
             }
 
-            (outputPath, isSkipped) = ExportPlanner.ResolveSingleVideoConflict(outputPath, policy.Value);
+            outputPath = stagingPath;
+            overwriteSourcePath = media.Path;
+            overwriteFinalPath = finalOverwritePath;
+        }
+        else
+        {
+            string sourceName = Path.GetFileNameWithoutExtension(media.Path);
+            string sourceExt = Path.GetExtension(media.Path);
+            outputPath = ExportPlanner.BuildSingleVideoOutputPath(
+                OutputFolder,
+                FileNamePattern,
+                sourceName,
+                sourceExt,
+                enabledSegments,
+                effectiveMode);
+
+            if (File.Exists(outputPath))
+            {
+                ConflictPolicy? policy = _conflictPrompt is not null
+                    ? await _conflictPrompt.Invoke([outputPath])
+                    : ConflictPolicy.AutoRename;
+                if (policy is null)
+                {
+                    return;
+                }
+
+                (outputPath, isSkipped) = ExportPlanner.ResolveSingleVideoConflict(outputPath, policy.Value);
+            }
         }
 
         var job = new SingleVideoExportJob(
@@ -560,7 +623,7 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
             AllowCpuFallback: allowCpuFallback,
             IsSkipped: isSkipped);
 
-        Task runTask = ExecuteSingleVideoExportAsync(job);
+        Task runTask = ExecuteSingleVideoExportAsync(job, overwriteSourcePath, overwriteFinalPath);
         _activeExportTask = runTask;
         await runTask;
     }
@@ -591,8 +654,14 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
                 $"L'espace disque disponible semble faible par rapport à la taille estimée.\n\nRequis estimé : {neededMb}\nDisponible : {freeMb}\n\nContinuer l'export malgré tout ?");
     }
 
-    private async Task ExecuteSingleVideoExportAsync(SingleVideoExportJob job)
+    private async Task ExecuteSingleVideoExportAsync(
+        SingleVideoExportJob job,
+        string? overwriteSourcePath = null,
+        string? overwriteFinalPath = null)
     {
+        bool isOverwrite = !string.IsNullOrEmpty(overwriteSourcePath) && !string.IsNullOrEmpty(overwriteFinalPath);
+        string displayFileName = Path.GetFileName(isOverwrite ? overwriteFinalPath! : job.OutputPath);
+
         Items.Clear();
         _lastExportedFiles.Clear();
         Summary = string.Empty;
@@ -600,10 +669,14 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
         GlobalProgress = 0.0;
         HasExportErrors = false;
 
+        string itemLabel = job.Segments.Count == 1
+            ? job.Segments[0].Name
+            : $"{job.Segments.Count} segment(s) fusionné(s)";
+
         var item = new ExportItemViewModel(
             job.JobId,
-            $"{job.Segments.Count} segment(s) fusionné(s)",
-            Path.GetFileName(job.OutputPath));
+            itemLabel,
+            displayFileName);
 
         if (job.IsSkipped)
         {
@@ -654,35 +727,77 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
             }
         });
 
+        string? reloadPathAfterFinally = null;
+        string? replaceErrorMessage = null;
+
         try
         {
             ExportResult result = await _exportQueue.RunSingleVideoAsync(job, progress, ct);
             stopwatch.Stop();
 
-            ApplyResultToItem(item, result);
-            if (result.Outcome == ExportOutcome.Success)
+            if (result.Outcome == ExportOutcome.Success && isOverwrite)
             {
-                GlobalProgress = 1.0;
-                if (!string.IsNullOrEmpty(result.FinalPath))
+                item.Message = "Remplacement de la vidéo source…";
+                try
                 {
-                    _lastExportedFiles.Add(result.FinalPath);
-                }
+                    if (_prepareOverwriteReleaseAsync is not null)
+                    {
+                        await _prepareOverwriteReleaseAsync.Invoke();
+                    }
 
-                Summary = $"Vidéo unique exportée ({job.Segments.Count} segment(s), {result.Elapsed.TotalSeconds:F1} s)";
-            }
-            else if (result.Outcome == ExportOutcome.Cancelled)
-            {
-                Summary = "Export annulé";
-            }
-            else if (result.Outcome == ExportOutcome.Skipped)
-            {
-                GlobalProgress = 1.0;
-                Summary = "Export ignoré (fichier existant)";
+                    await ReplaceSourceFileAsync(job.OutputPath, overwriteSourcePath!, overwriteFinalPath!);
+
+                    ApplyResultToItem(item, result with { FinalPath = overwriteFinalPath });
+                    GlobalProgress = 1.0;
+                    _lastExportedFiles.Add(overwriteFinalPath!);
+                    Summary = $"Vidéo source remplacée ({job.Segments.Count} segment(s), {result.Elapsed.TotalSeconds:F1} s)";
+                    reloadPathAfterFinally = overwriteFinalPath;
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error($"Impossible de remplacer la vidéo source '{overwriteSourcePath}' par '{job.OutputPath}'", ex);
+                    HasExportErrors = true;
+                    item.Status = ExportItemStatus.Erreur;
+                    item.Message = "Fichier source verrouillé ; export conservé";
+                    item.TechnicalDetails = ex.ToString();
+                    Summary = "Échec du remplacement de la vidéo source";
+                    reloadPathAfterFinally = overwriteSourcePath;
+                    replaceErrorMessage =
+                        $"Impossible de remplacer la vidéo source car le fichier est verrouillé par une autre application.\n\nLe résultat exporté a été conservé ici :\n{job.OutputPath}";
+                }
             }
             else
             {
-                HasExportErrors = true;
-                Summary = "Échec de l'export de la vidéo unique";
+                if (isOverwrite)
+                {
+                    await ExportService.DeleteFileWithRetriesAsync(job.OutputPath, _logger);
+                }
+
+                ApplyResultToItem(item, result);
+                if (result.Outcome == ExportOutcome.Success)
+                {
+                    GlobalProgress = 1.0;
+                    if (!string.IsNullOrEmpty(result.FinalPath))
+                    {
+                        _lastExportedFiles.Add(result.FinalPath);
+                    }
+
+                    Summary = $"Vidéo unique exportée ({job.Segments.Count} segment(s), {result.Elapsed.TotalSeconds:F1} s)";
+                }
+                else if (result.Outcome == ExportOutcome.Cancelled)
+                {
+                    Summary = "Export annulé";
+                }
+                else if (result.Outcome == ExportOutcome.Skipped)
+                {
+                    GlobalProgress = 1.0;
+                    Summary = "Export ignoré (fichier existant)";
+                }
+                else
+                {
+                    HasExportErrors = true;
+                    Summary = "Échec de l'export de la vidéo unique";
+                }
             }
 
             _logger.Info($"Export vidéo unique terminé : {Summary}");
@@ -716,6 +831,44 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
             _exportCts?.Dispose();
             _exportCts = null;
             OpenOutputFolderCommand.NotifyCanExecuteChanged();
+        }
+
+        if (reloadPathAfterFinally is not null && _reloadAfterOverwriteAsync is not null && !_disposed)
+        {
+            await _reloadAfterOverwriteAsync.Invoke(reloadPathAfterFinally);
+        }
+
+        if (replaceErrorMessage is not null && _errorPrompt is not null && !_disposed)
+        {
+            await _errorPrompt.Invoke(replaceErrorMessage);
+        }
+    }
+
+    private async Task ReplaceSourceFileAsync(string stagingPath, string sourcePath, string finalOverwritePath)
+    {
+        const int maxAttempts = 10;
+        const int retryDelayMs = 150;
+
+        for (int attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            try
+            {
+                File.Move(stagingPath, finalOverwritePath, overwrite: true);
+                break;
+            }
+            catch (IOException) when (attempt < maxAttempts - 1)
+            {
+                await Task.Delay(retryDelayMs);
+            }
+            catch (UnauthorizedAccessException) when (attempt < maxAttempts - 1)
+            {
+                await Task.Delay(retryDelayMs);
+            }
+        }
+
+        if (!string.Equals(finalOverwritePath, sourcePath, StringComparison.OrdinalIgnoreCase))
+        {
+            await ExportService.DeleteFileWithRetriesAsync(sourcePath, _logger);
         }
     }
 

@@ -77,6 +77,16 @@
                                 MinHeight="26"
                                 Focusable="False" />
                     </Grid>
+
+                    <RadioButton Content="Écraser la vidéo source par la vidéo enregistrée"
+                                 GroupName="SettingsOutputFolder"
+                                 Margin="0,4,0,0"
+                                 IsChecked="{Binding IsOverwriteSource, Mode=TwoWay}"
+                                 Focusable="False" />
+                    <TextBlock Text="Remplace directement le fichier d'origine (à utiliser avec « Exporter en une seule vidéo »)."
+                               Classes="muted"
+                               Margin="24,-2,0,0"
+                               TextWrapping="Wrap" />
                 </StackPanel>
             </Border>
 

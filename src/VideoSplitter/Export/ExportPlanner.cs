@@ -118,6 +118,28 @@ public static class ExportPlanner
         return Path.Combine(outputFolder, truncatedStem + ext);
     }
 
+    public static (string StagingPath, string FinalOverwritePath) BuildOverwritePaths(
+        string sourcePath,
+        ExportMode mode)
+    {
+        string dir = Path.GetDirectoryName(sourcePath) ?? string.Empty;
+        string sourceStem = Path.GetFileNameWithoutExtension(sourcePath);
+        string sourceExt = Path.GetExtension(sourcePath);
+        string effectiveExt = ResolveOutputExtension(sourceExt, mode);
+
+        string finalPath = string.Equals(effectiveExt, sourceExt, StringComparison.OrdinalIgnoreCase)
+            ? sourcePath
+            : Path.ChangeExtension(sourcePath, effectiveExt);
+
+        string token = Guid.NewGuid().ToString("N")[..8];
+        string suffix = $".__tmp_{token}";
+        string safeStem = SanitizeComponent(sourceStem, fallback: "video");
+        string stagingStem = FitStemWithSuffix(dir, safeStem, suffix, effectiveExt);
+        string stagingPath = Path.Combine(dir, stagingStem + effectiveExt);
+
+        return (stagingPath, finalPath);
+    }
+
     public static (string OutputPath, bool IsSkipped) ResolveSingleVideoConflict(
         string outputPath,
         ConflictPolicy policy)

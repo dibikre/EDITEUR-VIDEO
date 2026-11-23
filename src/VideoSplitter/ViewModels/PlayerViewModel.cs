@@ -162,9 +162,50 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         }
     }
 
-    public async Task OpenAsync(string path)
+    public Task OpenAsync(string path) => OpenCoreAsync(path, confirmBeforeOpen: true);
+
+    public Task ReloadAfterOverwriteAsync(string path) => OpenCoreAsync(path, confirmBeforeOpen: false);
+
+    public async Task ReleaseMediaForOverwriteAsync()
     {
-        if (BeforeOpenConfirmAsync is not null)
+        _openCts?.Cancel();
+        _openCts?.Dispose();
+        _openCts = null;
+
+        CancelThumbnailGeneration();
+
+        Interlocked.Increment(ref _openGeneration);
+        Interlocked.Exchange(ref _pauseOnFirstPlay, 0);
+        Interlocked.Exchange(ref _pendingSeekTargetMs, -1);
+        Interlocked.Exchange(ref _hasVoutForCurrentOpen, 0);
+
+        await Task.Run(() =>
+        {
+            if (_mediaPlayer.State is VLCState.Playing or VLCState.Paused or VLCState.Ended or VLCState.Opening or VLCState.Buffering)
+            {
+                _mediaPlayer.Stop();
+            }
+
+            _mediaPlayer.Media = null;
+        });
+
+        _mediaPlayer.Mute = IsMuted;
+        _currentMedia?.Dispose();
+        _currentMedia = null;
+
+        IsPlaying = false;
+        IsMediaLoaded = false;
+        Position = TimeSpan.Zero;
+        Duration = TimeSpan.Zero;
+        MediaInfo = null;
+
+        // Laisser un court delai a Windows/LibVLC pour fermer le descripteur de fichier.
+        await Task.Delay(60);
+    }
+
+    private async Task OpenCoreAsync(string path, bool confirmBeforeOpen)
+    {
+        if (confirmBeforeOpen && BeforeOpenConfirmAsync is not null)
         {
             bool shouldContinue = await BeforeOpenConfirmAsync.Invoke();
             if (!shouldContinue)
