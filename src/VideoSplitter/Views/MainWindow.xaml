@@ -5,6 +5,8 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vlc="clr-namespace:LibVLCSharp.WPF;assembly=LibVLCSharp.WPF"
         xmlns:vm="clr-namespace:VideoSplitter.ViewModels"
+        xmlns:controls="clr-namespace:VideoSplitter.Controls"
+        xmlns:conv="clr-namespace:VideoSplitter.Converters"
         mc:Ignorable="d"
         d:DataContext="{d:DesignInstance Type=vm:MainViewModel}"
         Style="{StaticResource DarkWindowStyle}"
@@ -13,7 +15,15 @@
         Height="800"
         MinWidth="1000"
         MinHeight="650"
+        AllowDrop="True"
+        DragOver="OnWindowDragOver"
+        Drop="OnWindowDrop"
+        PreviewKeyDown="OnWindowPreviewKeyDown"
         WindowStartupLocation="CenterScreen">
+
+    <Window.Resources>
+        <conv:TimeSpanToStringConverter x:Key="TimeSpanConverter" />
+    </Window.Resources>
 
     <Grid>
         <Grid.RowDefinitions>
@@ -38,8 +48,8 @@
             <DockPanel LastChildFill="False">
                 <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button Content="Ouvrir"
-                            IsEnabled="False"
-                            ToolTip="Disponible a l'etape 2"
+                            Command="{Binding Player.OuvrirCommand}"
+                            Focusable="False"
                             Margin="0,0,8,0" />
                     <Button Content="Exporter"
                             Style="{StaticResource PrimaryButtonStyle}"
@@ -58,13 +68,15 @@
                     <RadioButton Content="Rapide"
                                  GroupName="ExportMode"
                                  IsChecked="True"
+                                 Focusable="False"
                                  Margin="0,0,12,0" />
                     <RadioButton Content="Precis"
-                                 GroupName="ExportMode" />
+                                 GroupName="ExportMode"
+                                 Focusable="False" />
                 </StackPanel>
 
                 <TextBlock DockPanel.Dock="Right"
-                           Text="Aucun fichier charge"
+                           Text="{Binding Player.MediaSummary}"
                            Style="{StaticResource MutedTextStyle}" />
             </DockPanel>
         </Border>
@@ -77,7 +89,7 @@
             <vlc:VideoView x:Name="LecteurVideoView" />
         </Border>
 
-        <!-- 3. Controles de lecture (placeholder) -->
+        <!-- 3. Controles de lecture -->
         <Border Grid.Row="2"
                 Background="{StaticResource SurfaceBrush}"
                 BorderBrush="{StaticResource BorderBrush}"
@@ -91,28 +103,89 @@
 
                 <DockPanel Grid.Row="0" Margin="0,0,0,8">
                     <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
-                        <Button Content="&lt;&lt;" Width="36" Padding="4" IsEnabled="False" Margin="0,0,6,0" />
-                        <Button Content="Lecture / Pause" IsEnabled="False" Margin="0,0,6,0" />
-                        <Button Content="&gt;&gt;" Width="36" Padding="4" IsEnabled="False" Margin="0,0,16,0" />
-                        <TextBlock Text="00:00:00 / 00:00:00"
-                                   FontFamily="Consolas"
+                        <Button Content="&lt; Image"
+                                Command="{Binding Player.StepBackwardCommand}"
+                                Focusable="False"
+                                ToolTip="Image precedente (Fleche gauche)"
+                                Margin="0,0,6,0" />
+                        <Button Command="{Binding Player.PlayPauseCommand}"
+                                Focusable="False"
+                                MinWidth="92"
+                                ToolTip="Lecture / Pause (Espace)"
+                                Margin="0,0,6,0">
+                            <Button.Style>
+                                <Style TargetType="{x:Type Button}" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Content" Value="Lecture" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Player.IsPlaying}" Value="True">
+                                            <Setter Property="Content" Value="Pause" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Button Content="Image &gt;"
+                                Command="{Binding Player.StepForwardCommand}"
+                                Focusable="False"
+                                ToolTip="Image suivante (Fleche droite)"
+                                Margin="0,0,16,0" />
+
+                        <TextBlock FontFamily="Consolas"
                                    FontSize="13"
-                                   Foreground="{StaticResource TextSecondaryBrush}" />
+                                   Foreground="{StaticResource TextPrimaryBrush}">
+                            <TextBlock.Text>
+                                <MultiBinding StringFormat="{}{0} / {1}">
+                                    <Binding Path="Player.Position" Converter="{StaticResource TimeSpanConverter}" ConverterParameter="ms" />
+                                    <Binding Path="Player.Duration" Converter="{StaticResource TimeSpanConverter}" />
+                                </MultiBinding>
+                            </TextBlock.Text>
+                        </TextBlock>
                     </StackPanel>
 
                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                        <TextBlock Text="Volume" Style="{StaticResource MutedTextStyle}" Margin="0,0,8,0" />
-                        <Slider Width="90" Minimum="0" Maximum="100" Value="100" IsEnabled="False" Margin="0,0,16,0" />
-                        <TextBlock Text="Vitesse : 1.0x" Style="{StaticResource MutedTextStyle}" />
+                        <Button Command="{Binding Player.ToggleMuteCommand}"
+                                Focusable="False"
+                                MinWidth="58"
+                                Margin="0,0,8,0">
+                            <Button.Style>
+                                <Style TargetType="{x:Type Button}" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Content" Value="Son" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Player.IsMuted}" Value="True">
+                                            <Setter Property="Content" Value="Muet" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Slider Width="95"
+                                Minimum="0"
+                                Maximum="100"
+                                Value="{Binding Player.Volume, Mode=TwoWay}"
+                                Focusable="False"
+                                IsEnabled="{Binding Player.IsMediaLoaded}"
+                                Margin="0,0,16,0" />
+
+                        <TextBlock Text="Vitesse :" Style="{StaticResource MutedTextStyle}" Margin="0,0,6,0" />
+                        <ComboBox Width="74"
+                                  ItemsSource="{Binding Player.SpeedOptions}"
+                                  SelectedItem="{Binding Player.Speed, Mode=TwoWay}"
+                                  IsEnabled="{Binding Player.IsMediaLoaded}"
+                                  Focusable="False">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding StringFormat={}{0:0.##}x}" />
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
                     </StackPanel>
                 </DockPanel>
 
-                <Slider Grid.Row="1"
-                        Minimum="0"
-                        Maximum="100"
-                        Value="0"
-                        IsEnabled="False"
-                        ToolTip="Barre de lecture (etape 2)" />
+                <controls:SeekBar Grid.Row="1"
+                                  Duration="{Binding Player.Duration}"
+                                  Position="{Binding Player.Position}"
+                                  IsEnabled="{Binding Player.IsMediaLoaded}"
+                                  SeekRequested="OnSeekBarSeekRequested" />
             </Grid>
         </Border>
 

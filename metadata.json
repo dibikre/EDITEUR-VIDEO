@@ -1,0 +1,5 @@
+{
+  "name": "VideoSplitter",
+  "description": "Application de découpe vidéo avec lecteur intégré, vignettes au survol, timeline d'édition et export FFmpeg.",
+  "requestFramePermissions": []
+}

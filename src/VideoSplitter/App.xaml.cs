@@ -55,7 +55,9 @@ public partial class App : Application
         services.AddSingleton<IAppLogger, FileLogger>();
         services.AddSingleton(_ => new LibVLC("--avcodec-hw=any", "--no-video-title-show"));
         services.AddSingleton(sp => new VlcMediaPlayer(sp.GetRequiredService<LibVLC>()));
+        services.AddSingleton<IFfmpegService, FfmpegService>();
 
+        services.AddSingleton<PlayerViewModel>();
         services.AddSingleton<MainViewModel>();
         services.AddTransient<MainWindow>();
     }
