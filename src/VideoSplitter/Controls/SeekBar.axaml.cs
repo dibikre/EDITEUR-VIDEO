@@ -1,7 +1,9 @@
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Input;
-using System.Windows.Media;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.Media;
+using Avalonia.Media.Immutable;
 using VideoSplitter.Services;
 
 namespace VideoSplitter.Controls;
@@ -14,16 +16,16 @@ public partial class SeekBar : UserControl
     private const double ThumbRadiusNormal = 6.5;
     private const double ThumbRadiusActive = 7.5;
 
-    private static readonly SolidColorBrush TrackBackgroundBrush = CreateBrush(0x22, 0x26, 0x2E);
-    private static readonly SolidColorBrush TrackDisabledBrush = CreateBrush(0x18, 0x1B, 0x20);
-    private static readonly SolidColorBrush PlayedBrush = CreateBrush(0x3B, 0x82, 0xF6);
-    private static readonly SolidColorBrush ThumbFillBrush = CreateBrush(0xED, 0xF0, 0xF5);
-    private static readonly SolidColorBrush ThumbDisabledBrush = CreateBrush(0x55, 0x5C, 0x69);
-    private static readonly SolidColorBrush HoverTickBrush = CreateBrush(0x80, 0xED, 0xF0, 0xF5);
+    private static readonly IBrush TrackBackgroundBrush = CreateBrush(0x22, 0x26, 0x2E);
+    private static readonly IBrush TrackDisabledBrush = CreateBrush(0x18, 0x1B, 0x20);
+    private static readonly IBrush PlayedBrush = CreateBrush(0x3B, 0x82, 0xF6);
+    private static readonly IBrush ThumbFillBrush = CreateBrush(0xED, 0xF0, 0xF5);
+    private static readonly IBrush ThumbDisabledBrush = CreateBrush(0x55, 0x5C, 0x69);
+    private static readonly IBrush HoverTickBrush = CreateBrush(0x80, 0xED, 0xF0, 0xF5);
 
-    private static readonly Pen TrackBorderPen = CreatePen(0x2E, 0x34, 0x40, 1.0);
-    private static readonly Pen ThumbStrokePen = CreatePen(0x3B, 0x82, 0xF6, 2.0);
-    private static readonly Pen ThumbDisabledStrokePen = CreatePen(0x2E, 0x34, 0x40, 1.5);
+    private static readonly IPen TrackBorderPen = CreatePen(0x2E, 0x34, 0x40, 1.0);
+    private static readonly IPen ThumbStrokePen = CreatePen(0x3B, 0x82, 0xF6, 2.0);
+    private static readonly IPen ThumbDisabledStrokePen = CreatePen(0x2E, 0x34, 0x40, 1.5);
 
     private readonly ThumbnailHoverPopup _hoverPopup = new();
 
@@ -32,39 +34,35 @@ public partial class SeekBar : UserControl
     private double _hoverX;
     private TimeSpan _dragPosition;
 
-    public static readonly DependencyProperty DurationProperty = DependencyProperty.Register(
-        nameof(Duration),
-        typeof(TimeSpan),
-        typeof(SeekBar),
-        new FrameworkPropertyMetadata(TimeSpan.Zero, FrameworkPropertyMetadataOptions.AffectsRender));
+    public static readonly StyledProperty<TimeSpan> DurationProperty =
+        AvaloniaProperty.Register<SeekBar, TimeSpan>(nameof(Duration), TimeSpan.Zero);
 
-    public static readonly DependencyProperty PositionProperty = DependencyProperty.Register(
-        nameof(Position),
-        typeof(TimeSpan),
-        typeof(SeekBar),
-        new FrameworkPropertyMetadata(TimeSpan.Zero, FrameworkPropertyMetadataOptions.AffectsRender));
+    public static readonly StyledProperty<TimeSpan> PositionProperty =
+        AvaloniaProperty.Register<SeekBar, TimeSpan>(nameof(Position), TimeSpan.Zero);
 
-    public static readonly DependencyProperty ThumbnailsProperty = DependencyProperty.Register(
-        nameof(Thumbnails),
-        typeof(IThumbnailProvider),
-        typeof(SeekBar),
-        new PropertyMetadata(null));
+    public static readonly StyledProperty<IThumbnailProvider?> ThumbnailsProperty =
+        AvaloniaProperty.Register<SeekBar, IThumbnailProvider?>(nameof(Thumbnails), null);
+
+    static SeekBar()
+    {
+        AffectsRender<SeekBar>(DurationProperty, PositionProperty, IsEnabledProperty);
+    }
 
     public TimeSpan Duration
     {
-        get => (TimeSpan)GetValue(DurationProperty);
+        get => GetValue(DurationProperty);
         set => SetValue(DurationProperty, value);
     }
 
     public TimeSpan Position
     {
-        get => (TimeSpan)GetValue(PositionProperty);
+        get => GetValue(PositionProperty);
         set => SetValue(PositionProperty, value);
     }
 
     public IThumbnailProvider? Thumbnails
     {
-        get => (IThumbnailProvider?)GetValue(ThumbnailsProperty);
+        get => GetValue(ThumbnailsProperty);
         set => SetValue(ThumbnailsProperty, value);
     }
 
@@ -77,17 +75,17 @@ public partial class SeekBar : UserControl
         Unloaded += OnUnloaded;
     }
 
-    private void OnUnloaded(object sender, RoutedEventArgs e)
+    private void OnUnloaded(object? sender, RoutedEventArgs e)
     {
         _hoverPopup.Hide();
     }
 
-    protected override void OnRender(DrawingContext dc)
+    public override void Render(DrawingContext context)
     {
-        base.OnRender(dc);
+        base.Render(context);
 
-        double width = ActualWidth;
-        double height = ActualHeight;
+        double width = Bounds.Width;
+        double height = Bounds.Height;
         if (width <= HorizontalMargin * 2 || height <= 0)
         {
             return;
@@ -98,7 +96,7 @@ public partial class SeekBar : UserControl
         var trackRect = new Rect(HorizontalMargin, trackTop, trackWidth, TrackHeight);
 
         bool enabled = IsEnabled && Duration > TimeSpan.Zero;
-        dc.DrawRoundedRectangle(
+        context.DrawRectangle(
             enabled ? TrackBackgroundBrush : TrackDisabledBrush,
             TrackBorderPen,
             trackRect,
@@ -114,17 +112,17 @@ public partial class SeekBar : UserControl
         if (enabled && thumbX > HorizontalMargin)
         {
             var playedRect = new Rect(HorizontalMargin, trackTop, thumbX - HorizontalMargin, TrackHeight);
-            dc.DrawRoundedRectangle(PlayedBrush, null, playedRect, TrackCornerRadius, TrackCornerRadius);
+            context.DrawRectangle(PlayedBrush, null, playedRect, TrackCornerRadius, TrackCornerRadius);
         }
 
         if (enabled && _isHovering)
         {
             double clampedHoverX = Math.Clamp(_hoverX, HorizontalMargin, HorizontalMargin + trackWidth);
-            dc.DrawRectangle(HoverTickBrush, null, new Rect(clampedHoverX - 1.0, trackTop - 3.0, 2.0, TrackHeight + 6.0));
+            context.DrawRectangle(HoverTickBrush, null, new Rect(clampedHoverX - 1.0, trackTop - 3.0, 2.0, TrackHeight + 6.0));
         }
 
         double radius = (_isDragging || _isHovering) && enabled ? ThumbRadiusActive : ThumbRadiusNormal;
-        dc.DrawEllipse(
+        context.DrawEllipse(
             enabled ? ThumbFillBrush : ThumbDisabledBrush,
             enabled ? ThumbStrokePen : ThumbDisabledStrokePen,
             new Point(thumbX, height / 2.0),
@@ -132,16 +130,22 @@ public partial class SeekBar : UserControl
             radius);
     }
 
-    protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
+    protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
-        base.OnMouseLeftButtonDown(e);
+        base.OnPointerPressed(e);
 
         if (!IsEnabled || Duration <= TimeSpan.Zero)
         {
             return;
         }
 
-        Point pos = e.GetPosition(this);
+        PointerPoint pointerPoint = e.GetCurrentPoint(this);
+        if (!pointerPoint.Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        Point pos = pointerPoint.Position;
         TimeSpan target = XToTime(pos.X);
 
         _isDragging = true;
@@ -149,7 +153,7 @@ public partial class SeekBar : UserControl
         _hoverX = pos.X;
         _dragPosition = target;
 
-        CaptureMouse();
+        e.Pointer.Capture(this);
         InvalidateVisual();
         UpdatePopup(pos, target);
 
@@ -157,9 +161,9 @@ public partial class SeekBar : UserControl
         e.Handled = true;
     }
 
-    protected override void OnMouseMove(MouseEventArgs e)
+    protected override void OnPointerMoved(PointerEventArgs e)
     {
-        base.OnMouseMove(e);
+        base.OnPointerMoved(e);
 
         if (!IsEnabled || Duration <= TimeSpan.Zero)
         {
@@ -183,11 +187,11 @@ public partial class SeekBar : UserControl
         InvalidateVisual();
     }
 
-    protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)
+    protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
-        base.OnMouseLeftButtonUp(e);
+        base.OnPointerReleased(e);
 
-        if (!_isDragging)
+        if (!_isDragging || e.InitialPressMouseButton != MouseButton.Left)
         {
             return;
         }
@@ -197,11 +201,14 @@ public partial class SeekBar : UserControl
 
         _isDragging = false;
         _dragPosition = finalTime;
-        ReleaseMouseCapture();
+        if (Equals(e.Pointer.Captured, this))
+        {
+            e.Pointer.Capture(null);
+        }
 
         SeekCompleted?.Invoke(this, finalTime);
 
-        if (!IsMouseOver)
+        if (!IsPointerOver)
         {
             _isHovering = false;
             _hoverPopup.Hide();
@@ -215,9 +222,9 @@ public partial class SeekBar : UserControl
         e.Handled = true;
     }
 
-    protected override void OnMouseLeave(MouseEventArgs e)
+    protected override void OnPointerExited(PointerEventArgs e)
     {
-        base.OnMouseLeave(e);
+        base.OnPointerExited(e);
 
         if (!_isDragging)
         {
@@ -227,14 +234,14 @@ public partial class SeekBar : UserControl
         }
     }
 
-    protected override void OnLostMouseCapture(MouseEventArgs e)
+    protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
     {
-        base.OnLostMouseCapture(e);
+        base.OnPointerCaptureLost(e);
 
         if (_isDragging)
         {
             _isDragging = false;
-            if (!IsMouseOver)
+            if (!IsPointerOver)
             {
                 _isHovering = false;
                 _hoverPopup.Hide();
@@ -246,7 +253,7 @@ public partial class SeekBar : UserControl
 
     private TimeSpan XToTime(double x)
     {
-        double trackWidth = ActualWidth - (HorizontalMargin * 2);
+        double trackWidth = Bounds.Width - (HorizontalMargin * 2);
         if (trackWidth <= 0 || Duration <= TimeSpan.Zero)
         {
             return TimeSpan.Zero;
@@ -258,28 +265,16 @@ public partial class SeekBar : UserControl
 
     private void UpdatePopup(Point mousePosition, TimeSpan time)
     {
-        ImageSource? image = Thumbnails?.GetThumbnail(time);
+        IImage? image = Thumbnails?.GetThumbnail(time);
         _hoverPopup.Update(this, mousePosition, time, image, Duration);
     }
 
-    private static SolidColorBrush CreateBrush(byte r, byte g, byte b)
-    {
-        var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
-        brush.Freeze();
-        return brush;
-    }
+    private static IBrush CreateBrush(byte r, byte g, byte b)
+        => new ImmutableSolidColorBrush(Color.FromRgb(r, g, b));
 
-    private static SolidColorBrush CreateBrush(byte a, byte r, byte g, byte b)
-    {
-        var brush = new SolidColorBrush(Color.FromArgb(a, r, g, b));
-        brush.Freeze();
-        return brush;
-    }
+    private static IBrush CreateBrush(byte a, byte r, byte g, byte b)
+        => new ImmutableSolidColorBrush(Color.FromArgb(a, r, g, b));
 
-    private static Pen CreatePen(byte r, byte g, byte b, double thickness)
-    {
-        var pen = new Pen(CreateBrush(r, g, b), thickness);
-        pen.Freeze();
-        return pen;
-    }
+    private static IPen CreatePen(byte r, byte g, byte b, double thickness)
+        => new ImmutablePen(CreateBrush(r, g, b), thickness);
 }

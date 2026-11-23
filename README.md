@@ -1,6 +1,6 @@
 # VideoSplitter
 
-Application desktop Windows (WPF) pour découper des vidéos : lecteur intégré, vignettes de prévisualisation au survol de la barre de lecture, et timeline d'édition avec marqueurs de coupe. Export sans perte (rapide) ou précis à l'image (ré-encodage).
+Application desktop Windows (Avalonia UI) pour découper des vidéos : lecteur intégré, vignettes de prévisualisation au survol de la barre de lecture, et timeline d'édition avec marqueurs de coupe. Export sans perte (rapide) ou précis à l'image (ré-encodage).
 
 > Le détail fonctionnel et technique est dans [SPEC.md](SPEC.md).
 
@@ -9,8 +9,8 @@ Application desktop Windows (WPF) pour découper des vidéos : lecteur intégré
 | Rôle | Technologie |
 |---|---|
 | Runtime | .NET 10 (C#) |
-| Interface | WPF |
-| Lecteur | LibVLCSharp.WPF + VideoLAN.LibVLC.Windows |
+| Interface | Avalonia UI 11.3.22 (`FluentTheme`, thème sombre) |
+| Lecteur | LibVLCSharp.Avalonia + VideoLAN.LibVLC.Windows |
 | Traitement vidéo | FFmpeg / FFprobe (processus externes) via CliWrap |
 | Architecture | MVVM (CommunityToolkit.Mvvm) + Microsoft.Extensions.DependencyInjection |
 
@@ -49,7 +49,10 @@ dotnet run --project src\VideoSplitter
 
 | Package | Version |
 |---|---|
-| LibVLCSharp.WPF | 3.10.2 |
+| Avalonia | 11.3.22 |
+| Avalonia.Desktop | 11.3.22 |
+| Avalonia.Themes.Fluent | 11.3.22 |
+| LibVLCSharp.Avalonia | 3.10.2 |
 | VideoLAN.LibVLC.Windows | 3.0.24 |
 | CliWrap | 3.10.5 |
 | CommunityToolkit.Mvvm | 8.4.2 |
@@ -63,13 +66,18 @@ VideoSplitter/
   SPEC.md
   scripts/fetch-ffmpeg.ps1
   src/VideoSplitter/
+    Program.cs            point d'entrée Avalonia Desktop
+    App.axaml(.cs)        composition root DI, Core.Initialize, thème
     Assets/ffmpeg/        binaires FFmpeg (non versionnés)
-    Models/
-    Services/             FFmpeg, vignettes, export, cache
-    ViewModels/
-    Controls/             TimelineControl, SeekBar, popup de vignette
-    Views/
-    Themes/
+    Models/               MediaInfo, Segment, SpriteSet, ExportModels
+    Editing/              SegmentEditor, KeyframeSnapper, EditHistory
+    Export/               FfmpegArgsBuilder, ExportPlanner, CutAccuracy
+    Services/             FFmpeg, vignettes, export, cache, logs
+    ViewModels/           Main, Player, Timeline, Edit, Export
+    Controls/             TimelineControl, TimelineView, SeekBar, ThumbnailHoverPopup
+    Converters/           TimeSpan, EnumBoolean, StatusVisualConverters
+    Views/                MainWindow, ExportConflictDialog, FastCutWarningDialog, MessageDialog
+    Themes/               Dark.axaml
 ```
 
 ## Dépannage

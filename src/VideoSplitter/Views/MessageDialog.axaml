@@ -1,0 +1,36 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="VideoSplitter.Views.MessageDialog"
+        Width="480"
+        SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+    <Border Background="{StaticResource SurfaceBrush}" Padding="18">
+        <StackPanel Spacing="16">
+            <TextBlock x:Name="MessageTextBlock"
+                       TextWrapping="Wrap"
+                       FontSize="13.5" />
+
+            <StackPanel Orientation="Horizontal"
+                        HorizontalAlignment="Right"
+                        Spacing="8">
+                <Button x:Name="YesButton"
+                        Content="Oui"
+                        Classes="primary"
+                        IsVisible="False"
+                        Click="OnYesClick" />
+                <Button x:Name="NoButton"
+                        Content="Non"
+                        IsVisible="False"
+                        IsCancel="True"
+                        Click="OnNoClick" />
+                <Button x:Name="OkButton"
+                        Content="OK"
+                        Classes="primary"
+                        IsDefault="True"
+                        Click="OnOkClick" />
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</Window>

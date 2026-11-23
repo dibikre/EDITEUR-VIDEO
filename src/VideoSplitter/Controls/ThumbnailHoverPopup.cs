@@ -1,9 +1,13 @@
 using System.Runtime.InteropServices;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
-using System.Windows.Interop;
-using System.Windows.Media;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Controls.Primitives.PopupPositioning;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Avalonia.Media.Imaging;
+using Avalonia.Media.Immutable;
+using Avalonia.Platform;
 
 namespace VideoSplitter.Controls;
 
@@ -23,11 +27,10 @@ public sealed class ThumbnailHoverPopup
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = false)]
     private static extern nint SetWindowLongPtr(nint hWnd, int nIndex, nint dwNewLong);
 
-    private static readonly SolidColorBrush PopupBackgroundBrush = CreateFrozenBrush(0x1A, 0x1D, 0x23);
-    private static readonly SolidColorBrush PopupBorderBrush = CreateFrozenBrush(0x2E, 0x34, 0x40);
-    private static readonly SolidColorBrush TimeTextBrush = CreateFrozenBrush(0xED, 0xF0, 0xF5);
+    private static readonly IBrush PopupBackgroundBrush = new ImmutableSolidColorBrush(Color.FromRgb(0x1A, 0x1D, 0x23));
+    private static readonly IBrush PopupBorderBrush = new ImmutableSolidColorBrush(Color.FromRgb(0x2E, 0x34, 0x40));
+    private static readonly IBrush TimeTextBrush = new ImmutableSolidColorBrush(Color.FromRgb(0xED, 0xF0, 0xF5));
     private static readonly FontFamily TimeFontFamily = new("Consolas");
-    private static readonly Size InfiniteSize = new(double.PositiveInfinity, double.PositiveInfinity);
 
     private readonly Popup _popup;
     private readonly Border _container;
@@ -35,7 +38,7 @@ public sealed class ThumbnailHoverPopup
     private readonly TextBlock _timeTextBlock;
 
     private Window? _hookedWindow;
-    private UIElement? _hookedTarget;
+    private Control? _hookedTarget;
     private long _lastFormattedSeconds = -1;
     private bool _lastUseHours;
     private bool _lastHasImage;
@@ -47,11 +50,11 @@ public sealed class ThumbnailHoverPopup
             Width = 160,
             Stretch = Stretch.Uniform,
             Margin = new Thickness(0, 0, 0, 5),
-            Visibility = Visibility.Collapsed,
+            IsVisible = false,
             IsHitTestVisible = false,
             Focusable = false
         };
-        RenderOptions.SetBitmapScalingMode(_imageControl, BitmapScalingMode.HighQuality);
+        RenderOptions.SetBitmapInterpolationMode(_imageControl, BitmapInterpolationMode.HighQuality);
 
         _timeTextBlock = new TextBlock
         {
@@ -80,20 +83,24 @@ public sealed class ThumbnailHoverPopup
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(6),
             Padding = new Thickness(6),
-            SnapsToDevicePixels = true,
             IsHitTestVisible = false,
             Focusable = false,
             Child = stack
         };
 
-        // StaysOpen = true evite la capture souris automatique de WPF (cause de tremblement/blocage de clics).
+        // ShouldUseOverlayLayer=false permet de flotter au-dessus de la surface native LibVLC,
+        // IsLightDismissEnabled=false evite toute capture de souris ou blocage de clic.
         _popup = new Popup
         {
-            AllowsTransparency = true,
             IsHitTestVisible = false,
             Focusable = false,
-            StaysOpen = true,
-            Placement = PlacementMode.Relative,
+            IsLightDismissEnabled = false,
+            ShouldUseOverlayLayer = false,
+            Topmost = true,
+            Placement = PlacementMode.AnchorAndGravity,
+            PlacementAnchor = PopupAnchor.TopLeft,
+            PlacementGravity = PopupGravity.BottomRight,
+            PlacementConstraintAdjustment = PopupPositionerConstraintAdjustment.None,
             Child = _container
         };
 
@@ -101,12 +108,12 @@ public sealed class ThumbnailHoverPopup
         _popup.Closed += OnPopupClosed;
     }
 
-    public void Update(UIElement target, Point mousePosition, TimeSpan time, ImageSource? image)
+    public void Update(Control target, Point mousePosition, TimeSpan time, IImage? image)
     {
         Update(target, mousePosition, time, image, null);
     }
 
-    public void Update(UIElement target, Point mousePosition, TimeSpan time, ImageSource? image, TimeSpan? totalDuration)
+    public void Update(Control target, Point mousePosition, TimeSpan time, IImage? image, TimeSpan? totalDuration)
     {
         if (time < TimeSpan.Zero)
         {
@@ -122,7 +129,7 @@ public sealed class ThumbnailHoverPopup
         bool visibilityChanged = hasImage != _lastHasImage;
         if (visibilityChanged)
         {
-            _imageControl.Visibility = hasImage ? Visibility.Visible : Visibility.Collapsed;
+            _imageControl.IsVisible = hasImage;
             _lastHasImage = hasImage;
         }
 
@@ -140,13 +147,13 @@ public sealed class ThumbnailHoverPopup
             _popup.PlacementTarget = target;
         }
 
-        if (_container.ActualWidth <= 0 || _container.ActualHeight <= 0 || visibilityChanged)
+        if (_container.Bounds.Width <= 0 || _container.Bounds.Height <= 0 || visibilityChanged)
         {
-            _container.Measure(InfiniteSize);
+            _container.Measure(Size.Infinity);
         }
 
-        double popupWidth = _container.ActualWidth > 0 ? _container.ActualWidth : _container.DesiredSize.Width;
-        double popupHeight = _container.ActualHeight > 0 ? _container.ActualHeight : _container.DesiredSize.Height;
+        double popupWidth = _container.Bounds.Width > 0 ? _container.Bounds.Width : _container.DesiredSize.Width;
+        double popupHeight = _container.Bounds.Height > 0 ? _container.Bounds.Height : _container.DesiredSize.Height;
 
         double offsetX = mousePosition.X - (popupWidth / 2.0);
         double offsetY = mousePosition.Y - popupHeight - VerticalCursorGap;
@@ -175,7 +182,7 @@ public sealed class ThumbnailHoverPopup
 
     private void OnPopupOpened(object? sender, EventArgs e)
     {
-        if (PresentationSource.FromVisual(_container) is HwndSource { Handle: var hwnd } && hwnd != IntPtr.Zero)
+        if (TopLevel.GetTopLevel(_container)?.TryGetPlatformHandle()?.Handle is nint hwnd && hwnd != IntPtr.Zero)
         {
             nint exStyle = GetWindowLongPtr(hwnd, GwlExStyle);
             nint updatedStyle = (nint)((long)exStyle | WsExTransparent | WsExNoActivate);
@@ -191,19 +198,19 @@ public sealed class ThumbnailHoverPopup
         DetachDismissHooks();
     }
 
-    private void AttachDismissHooks(UIElement target)
+    private void AttachDismissHooks(Control target)
     {
         if (!ReferenceEquals(_hookedTarget, target))
         {
             DetachDismissHooks();
             _hookedTarget = target;
-            _hookedTarget.IsVisibleChanged += OnTargetVisibilityChanged;
+            _hookedTarget.PropertyChanged += OnTargetPropertyChanged;
 
-            _hookedWindow = Window.GetWindow(target);
-            if (_hookedWindow is not null)
+            if (TopLevel.GetTopLevel(target) is Window window)
             {
+                _hookedWindow = window;
                 _hookedWindow.Deactivated += OnOwnerWindowDismissSignal;
-                _hookedWindow.LocationChanged += OnOwnerWindowDismissSignal;
+                _hookedWindow.PositionChanged += OnOwnerWindowPositionChanged;
                 _hookedWindow.SizeChanged += OnOwnerWindowSizeChanged;
             }
         }
@@ -213,22 +220,22 @@ public sealed class ThumbnailHoverPopup
     {
         if (_hookedTarget is not null)
         {
-            _hookedTarget.IsVisibleChanged -= OnTargetVisibilityChanged;
+            _hookedTarget.PropertyChanged -= OnTargetPropertyChanged;
             _hookedTarget = null;
         }
 
         if (_hookedWindow is not null)
         {
             _hookedWindow.Deactivated -= OnOwnerWindowDismissSignal;
-            _hookedWindow.LocationChanged -= OnOwnerWindowDismissSignal;
+            _hookedWindow.PositionChanged -= OnOwnerWindowPositionChanged;
             _hookedWindow.SizeChanged -= OnOwnerWindowSizeChanged;
             _hookedWindow = null;
         }
     }
 
-    private void OnTargetVisibilityChanged(object sender, DependencyPropertyChangedEventArgs e)
+    private void OnTargetPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
     {
-        if (e.NewValue is false)
+        if (e.Property == Visual.IsVisibleProperty && e.NewValue is false)
         {
             Hide();
         }
@@ -239,50 +246,63 @@ public sealed class ThumbnailHoverPopup
         Hide();
     }
 
-    private void OnOwnerWindowSizeChanged(object sender, SizeChangedEventArgs e)
+    private void OnOwnerWindowPositionChanged(object? sender, PixelPointEventArgs e)
+    {
+        Hide();
+    }
+
+    private void OnOwnerWindowSizeChanged(object? sender, SizeChangedEventArgs e)
     {
         Hide();
     }
 
     private static void ClampOffsetsToWindowAndScreen(
-        UIElement target,
+        Control target,
         Point mousePosition,
         double popupWidth,
         double popupHeight,
         ref double offsetX,
         ref double offsetY)
     {
-        Window? window = Window.GetWindow(target);
-        if (window is not null && PresentationSource.FromVisual(target) is not null)
+        TopLevel? topLevel = TopLevel.GetTopLevel(target);
+        if (topLevel is null)
         {
-            Point originInWindow = target.TranslatePoint(new Point(0, 0), window);
-            double minWindowX = -originInWindow.X + HorizontalPaddingMargin;
-            double maxWindowX = window.ActualWidth - originInWindow.X - popupWidth - HorizontalPaddingMargin;
+            return;
+        }
+
+        if (target.TranslatePoint(new Point(0, 0), topLevel) is Point originInTopLevel)
+        {
+            double minWindowX = -originInTopLevel.X + HorizontalPaddingMargin;
+            double maxWindowX = topLevel.ClientSize.Width - originInTopLevel.X - popupWidth - HorizontalPaddingMargin;
             if (maxWindowX >= minWindowX)
             {
                 offsetX = Math.Clamp(offsetX, minWindowX, maxWindowX);
             }
         }
 
-        PresentationSource? source = PresentationSource.FromVisual(target);
-        if (source?.CompositionTarget is not null)
+        if (topLevel is Window window && window.Screens.ScreenFromVisual(target) is Screen screen)
         {
-            Point screenOriginPx = target.PointToScreen(new Point(0, 0));
-            Point screenOriginDip = source.CompositionTarget.TransformFromDevice.Transform(screenOriginPx);
+            double scaling = topLevel.RenderScaling > 0 ? topLevel.RenderScaling : screen.Scaling;
+            if (scaling <= 0)
+            {
+                scaling = 1.0;
+            }
 
-            Rect workArea = SystemParameters.WorkArea;
-            double minScreenX = workArea.Left - screenOriginDip.X + HorizontalPaddingMargin;
-            double maxScreenX = workArea.Right - screenOriginDip.X - popupWidth - HorizontalPaddingMargin;
+            PixelPoint screenOriginPx = target.PointToScreen(new Point(0, 0));
+            PixelRect workArea = screen.WorkingArea;
+
+            double minScreenX = ((workArea.X - screenOriginPx.X) / scaling) + HorizontalPaddingMargin;
+            double maxScreenX = ((workArea.Right - screenOriginPx.X) / scaling) - popupWidth - HorizontalPaddingMargin;
             if (maxScreenX >= minScreenX)
             {
                 offsetX = Math.Clamp(offsetX, minScreenX, maxScreenX);
             }
 
-            double minScreenY = workArea.Top - screenOriginDip.Y + HorizontalPaddingMargin;
+            double minScreenY = ((workArea.Y - screenOriginPx.Y) / scaling) + HorizontalPaddingMargin;
             if (offsetY < minScreenY)
             {
                 double belowY = mousePosition.Y + BelowCursorGap;
-                double maxScreenY = workArea.Bottom - screenOriginDip.Y - popupHeight - HorizontalPaddingMargin;
+                double maxScreenY = ((workArea.Bottom - screenOriginPx.Y) / scaling) - popupHeight - HorizontalPaddingMargin;
                 offsetY = belowY <= maxScreenY ? belowY : minScreenY;
             }
         }
@@ -294,12 +314,5 @@ public sealed class ThumbnailHoverPopup
         return includeHours
             ? $"{totalHours:D2}:{time.Minutes:D2}:{time.Seconds:D2}"
             : $"{(int)time.TotalMinutes:D2}:{time.Seconds:D2}";
-    }
-
-    private static SolidColorBrush CreateFrozenBrush(byte r, byte g, byte b)
-    {
-        var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
-        brush.Freeze();
-        return brush;
     }
 }

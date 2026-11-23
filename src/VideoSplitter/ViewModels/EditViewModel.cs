@@ -1,6 +1,5 @@
 using System.Collections.ObjectModel;
-using System.Windows;
-using System.Windows.Threading;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using VideoSplitter.Editing;
@@ -97,7 +96,7 @@ public sealed partial class EditViewModel : ObservableObject, IDisposable
         _ffmpegService = ffmpegService;
         _logger = logger;
 
-        _statusTimer = new DispatcherTimer(DispatcherPriority.Normal, Application.Current.Dispatcher)
+        _statusTimer = new DispatcherTimer(DispatcherPriority.Normal)
         {
             Interval = TimeSpan.FromSeconds(3)
         };

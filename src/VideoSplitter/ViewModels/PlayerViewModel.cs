@@ -1,9 +1,7 @@
-using System.Windows;
-using System.Windows.Threading;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using LibVLCSharp.Shared;
-using Microsoft.Win32;
 using VideoSplitter.Models;
 using VideoSplitter.Services;
 using VlcMediaPlayer = LibVLCSharp.Shared.MediaPlayer;
@@ -24,7 +22,6 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     private readonly IFfmpegService _ffmpegService;
     private readonly IThumbnailService _thumbnailService;
     private readonly IAppLogger _logger;
-    private readonly Dispatcher _dispatcher;
 
     private CancellationTokenSource? _openCts;
     private CancellationTokenSource? _thumbnailCts;
@@ -44,7 +41,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
     public string MediaSummary => MediaInfo is { } info
         ? $"{info.Width}x{info.Height} · {info.Fps:F2} fps · {info.VideoCodec}"
-        : "Aucun fichier charge";
+        : "Aucun fichier chargé";
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(
@@ -93,6 +90,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
     public event EventHandler<string>? ErrorOccurred;
     public Func<Task<bool>>? BeforeOpenConfirmAsync { get; set; }
+    public Func<Task<string?>>? PickVideoFileAsync { get; set; }
 
     public PlayerViewModel(
         VlcMediaPlayer mediaPlayer,
@@ -106,7 +104,6 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         _ffmpegService = ffmpegService;
         _thumbnailService = thumbnailService;
         _logger = logger;
-        _dispatcher = Application.Current.Dispatcher;
 
         AttachMediaPlayerEvents();
     }
@@ -118,7 +115,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             return false;
         }
 
-        string ext = System.IO.Path.GetExtension(path);
+        string ext = Path.GetExtension(path);
         return SupportedVideoExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase);
     }
 
@@ -150,16 +147,15 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private async Task OuvrirAsync()
     {
-        var dialog = new OpenFileDialog
+        if (PickVideoFileAsync is null)
         {
-            Title = "Ouvrir une video",
-            Filter = "Fichiers video (*.mp4;*.mkv;*.mov;*.avi;*.webm;*.m4v;*.ts;*.wmv;*.flv;*.mpg)|*.mp4;*.mkv;*.mov;*.avi;*.webm;*.m4v;*.ts;*.wmv;*.flv;*.mpg|Tous les fichiers (*.*)|*.*",
-            CheckFileExists = true
-        };
+            return;
+        }
 
-        if (dialog.ShowDialog() == true)
+        string? filePath = await PickVideoFileAsync.Invoke();
+        if (!string.IsNullOrWhiteSpace(filePath))
         {
-            await OpenAsync(dialog.FileName);
+            await OpenAsync(filePath);
         }
     }
 
@@ -344,6 +340,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             {
                 _mediaPlayer.Play();
             }
+
             IsPlaying = true;
             return;
         }
@@ -551,7 +548,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             return;
         }
 
-        _dispatcher.BeginInvoke(() =>
+        Dispatcher.UIThread.Post(() =>
         {
             if (!_disposed && _mediaPlayer.State != VLCState.Ended)
             {
@@ -568,7 +565,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         }
 
         long lengthMs = e.Length;
-        _dispatcher.BeginInvoke(() =>
+        Dispatcher.UIThread.Post(() =>
         {
             if (!_disposed && Duration <= TimeSpan.Zero)
             {
@@ -642,7 +639,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         });
 
         TimeSpan uiPos = seekTarget >= 0 ? TimeSpan.FromMilliseconds(seekTarget) : TimeSpan.Zero;
-        _dispatcher.BeginInvoke(() =>
+        Dispatcher.UIThread.Post(() =>
         {
             if (!_disposed && Volatile.Read(ref _openGeneration) == generation)
             {
@@ -656,7 +653,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     {
         if (Volatile.Read(ref _pauseOnFirstPlay) == 1)
         {
-            _dispatcher.BeginInvoke(() =>
+            Dispatcher.UIThread.Post(() =>
             {
                 if (!_disposed)
                 {
@@ -666,7 +663,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             return;
         }
 
-        _dispatcher.BeginInvoke(() =>
+        Dispatcher.UIThread.Post(() =>
         {
             if (!_disposed)
             {
@@ -677,7 +674,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
     private void OnVlcPaused(object? sender, EventArgs e)
     {
-        _dispatcher.BeginInvoke(() =>
+        Dispatcher.UIThread.Post(() =>
         {
             if (!_disposed)
             {
@@ -688,7 +685,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
     private void OnVlcStopped(object? sender, EventArgs e)
     {
-        _dispatcher.BeginInvoke(() =>
+        Dispatcher.UIThread.Post(() =>
         {
             if (!_disposed)
             {
@@ -700,7 +697,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     private void OnVlcEndReached(object? sender, EventArgs e)
     {
         bool wasPreRoll = Interlocked.Exchange(ref _pauseOnFirstPlay, 0) == 1;
-        _dispatcher.BeginInvoke(() =>
+        Dispatcher.UIThread.Post(() =>
         {
             if (!_disposed)
             {
@@ -719,7 +716,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     {
         Interlocked.Exchange(ref _pauseOnFirstPlay, 0);
         _logger.Error("LibVLC a rencontre une erreur de lecture.");
-        _dispatcher.BeginInvoke(() =>
+        Dispatcher.UIThread.Post(() =>
         {
             if (!_disposed)
             {

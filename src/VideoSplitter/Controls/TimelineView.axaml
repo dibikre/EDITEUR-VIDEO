@@ -1,0 +1,161 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:VideoSplitter.Controls"
+             x:Class="VideoSplitter.Controls.TimelineView"
+             x:Name="RootTimelineView">
+    <Grid RowDefinitions="Auto,Auto,Auto">
+        <!-- Barre d'outils edition + zoom de la timeline -->
+        <DockPanel Grid.Row="0" Margin="0,0,0,6" LastChildFill="True">
+            <StackPanel DockPanel.Dock="Right"
+                        Orientation="Horizontal"
+                        VerticalAlignment="Center"
+                        Margin="10,0,0,0">
+                <TextBlock Text="{Binding #RootTimelineView.Edit.KeyframeStatus}"
+                           Classes="muted"
+                           Margin="0,0,12,0" />
+                <TextBlock Text="{Binding #RootTimelineView.Timeline.ZoomLabel}"
+                           Classes="muted"
+                           FontFamily="Consolas" />
+            </StackPanel>
+
+            <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <Button Content="Split (S)"
+                        Command="{Binding #RootTimelineView.Edit.SplitCommand}"
+                        Focusable="False"
+                        Padding="8,3"
+                        MinHeight="26"
+                        ToolTip.Tip="Couper le segment au playhead (S)"
+                        Margin="0,0,4,2" />
+                <Button Content="In (I)"
+                        Command="{Binding #RootTimelineView.Edit.SetInCommand}"
+                        Focusable="False"
+                        Padding="8,3"
+                        MinHeight="26"
+                        ToolTip.Tip="Définir le début du segment au playhead (I)"
+                        Margin="0,0,4,2" />
+                <Button Content="Out (O)"
+                        Command="{Binding #RootTimelineView.Edit.SetOutCommand}"
+                        Focusable="False"
+                        Padding="8,3"
+                        MinHeight="26"
+                        ToolTip.Tip="Définir la fin du segment au playhead (O)"
+                        Margin="0,0,4,2" />
+                <Button Content="Supprimer marqueur"
+                        Command="{Binding #RootTimelineView.Edit.DeleteMarkerCommand}"
+                        Focusable="False"
+                        Padding="8,3"
+                        MinHeight="26"
+                        ToolTip.Tip="Supprimer le marqueur sélectionné (Suppr)"
+                        Margin="0,0,4,2" />
+                <Button Content="Activer / Désactiver (E)"
+                        Command="{Binding #RootTimelineView.Edit.ToggleEnabledCommand}"
+                        Focusable="False"
+                        Padding="8,3"
+                        MinHeight="26"
+                        ToolTip.Tip="Inclure ou exclure le segment sélectionné (E)"
+                        Margin="0,0,8,2" />
+
+                <Border Width="1"
+                        Height="18"
+                        Background="{StaticResource BorderBrush}"
+                        Margin="0,0,8,2" />
+
+                <Button Content="Annuler"
+                        Command="{Binding #RootTimelineView.Edit.UndoCommand}"
+                        Focusable="False"
+                        Padding="8,3"
+                        MinHeight="26"
+                        ToolTip.Tip="Annuler la dernière modification (Ctrl+Z)"
+                        Margin="0,0,4,2" />
+                <Button Content="Rétablir"
+                        Command="{Binding #RootTimelineView.Edit.RedoCommand}"
+                        Focusable="False"
+                        Padding="8,3"
+                        MinHeight="26"
+                        ToolTip.Tip="Rétablir la modification (Ctrl+Y ou Ctrl+Maj+Z)"
+                        Margin="0,0,8,2" />
+
+                <CheckBox Content="Aimanter aux keyframes"
+                          IsChecked="{Binding #RootTimelineView.Edit.SnapToKeyframes, Mode=TwoWay}"
+                          Focusable="False"
+                          ToolTip.Tip="Aimanter les coupes et marqueurs aux keyframes (maintenir Alt pour ignorer)"
+                          VerticalAlignment="Center"
+                          Margin="0,0,10,2" />
+
+                <Border Width="1"
+                        Height="18"
+                        Background="{StaticResource BorderBrush}"
+                        Margin="0,0,8,2" />
+
+                <Button Content="Zoom -"
+                        Command="{Binding #RootTimelineView.Timeline.ZoomOutCommand}"
+                        Focusable="False"
+                        Padding="8,3"
+                        MinHeight="26"
+                        ToolTip.Tip="Zoom arrière (Ctrl+-)"
+                        Margin="0,0,4,2" />
+                <Button Content="Zoom +"
+                        Command="{Binding #RootTimelineView.Timeline.ZoomInCommand}"
+                        Focusable="False"
+                        Padding="8,3"
+                        MinHeight="26"
+                        ToolTip.Tip="Zoom avant (Ctrl++)"
+                        Margin="0,0,4,2" />
+                <Button Content="Ajuster"
+                        Command="{Binding #RootTimelineView.Timeline.FitToWindowCommand}"
+                        Focusable="False"
+                        Padding="8,3"
+                        MinHeight="26"
+                        ToolTip.Tip="Ajuster à la fenêtre (Ctrl+0)"
+                        Margin="0,0,8,2" />
+
+                <CheckBox Content="Suivre la lecture"
+                          IsChecked="{Binding #RootTimelineView.Timeline.FollowPlayback, Mode=TwoWay}"
+                          Focusable="False"
+                          VerticalAlignment="Center"
+                          Margin="0,0,0,2" />
+            </WrapPanel>
+        </DockPanel>
+
+        <!-- Controle de timeline personnalise -->
+        <Border Grid.Row="1"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="1,1,1,0"
+                CornerRadius="3,3,0,0">
+            <controls:TimelineControl x:Name="TimelineCanvas"
+                                      Duration="{Binding #RootTimelineView.Duration}"
+                                      Position="{Binding #RootTimelineView.Position}"
+                                      IsPlaying="{Binding #RootTimelineView.IsPlaying}"
+                                      PlaybackSpeed="{Binding #RootTimelineView.PlaybackSpeed}"
+                                      Thumbnails="{Binding #RootTimelineView.Thumbnails}"
+                                      PixelsPerSecond="{Binding #RootTimelineView.Timeline.PixelsPerSecond, Mode=TwoWay}"
+                                      ScrollOffsetSeconds="{Binding #RootTimelineView.Timeline.ScrollOffsetSeconds, Mode=TwoWay}"
+                                      IsFitToWindow="{Binding #RootTimelineView.Timeline.IsFitToWindow, Mode=TwoWay}"
+                                      FollowPlayback="{Binding #RootTimelineView.Timeline.FollowPlayback, Mode=OneWay}"
+                                      Segments="{Binding #RootTimelineView.Edit.Segments, Mode=OneWay}"
+                                      SelectedSegmentId="{Binding #RootTimelineView.Edit.SelectedSegmentId, Mode=OneWay}"
+                                      SelectedMarkerIndex="{Binding #RootTimelineView.Edit.SelectedMarkerIndex, Mode=OneWay}"
+                                      Keyframes="{Binding #RootTimelineView.Edit.Keyframes, Mode=OneWay}"
+                                      SnapToKeyframes="{Binding #RootTimelineView.Edit.SnapToKeyframes, Mode=OneWay}"
+                                      SeekRequested="OnTimelineSeekRequested"
+                                      SeekCompleted="OnTimelineSeekCompleted"
+                                      SegmentSelectionRequested="OnTimelineSegmentSelectionRequested"
+                                      MarkerSelectionRequested="OnTimelineMarkerSelectionRequested"
+                                      BoundaryDragPreview="OnTimelineBoundaryDragPreview"
+                                      BoundaryDragCompleted="OnTimelineBoundaryDragCompleted"
+                                      ViewportChanged="OnTimelineViewportChanged" />
+        </Border>
+
+        <!-- Barre de defilement horizontale synchronisee -->
+        <ScrollBar x:Name="HorizontalScrollBar"
+                   Grid.Row="2"
+                   Orientation="Horizontal"
+                   AllowAutoHide="False"
+                   Minimum="0"
+                   Maximum="0"
+                   Value="0"
+                   IsEnabled="False"
+                   Focusable="False"
+                   Scroll="OnScrollBarScroll" />
+    </Grid>
+</UserControl>

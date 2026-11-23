@@ -1,4 +1,5 @@
-using System.Windows.Media;
+using Avalonia;
+using Avalonia.Media;
 using VideoSplitter.Models;
 
 namespace VideoSplitter.Services;
@@ -10,7 +11,7 @@ public interface IThumbnailProvider : IDisposable
 
     event EventHandler? ThumbnailsChanged;
 
-    ImageSource? GetThumbnail(TimeSpan time);
+    IImage? GetThumbnail(TimeSpan time);
     int IndexForTime(TimeSpan time);
-    Brush? GetThumbnailBrush(int index);
+    bool TryGetThumbnailTile(int index, out IImage? sheet, out Rect sourceRect);
 }

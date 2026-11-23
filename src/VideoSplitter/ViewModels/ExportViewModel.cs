@@ -1,20 +1,22 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
-using System.IO;
-using System.Media;
 using System.Runtime.InteropServices;
-using System.Windows;
-using System.Windows.Shell;
-using System.Windows.Threading;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Microsoft.Win32;
 using VideoSplitter.Export;
 using VideoSplitter.Models;
 using VideoSplitter.Services;
 using VideoSplitter.Views;
 
 namespace VideoSplitter.ViewModels;
+
+public enum AppTaskbarState
+{
+    None,
+    Normal,
+    Error
+}
 
 public sealed partial class EncoderOptionItem : ObservableObject
 {
@@ -41,20 +43,27 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
         EsSystemRequired = 0x00000001
     }
 
+    private const uint MbIconAsterisk = 0x00000040;
+
     [DllImport("kernel32.dll", SetLastError = false)]
     private static extern uint SetThreadExecutionState(ExecutionState esFlags);
+
+    [DllImport("user32.dll", SetLastError = false)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool MessageBeep(uint uType);
 
     private readonly IFfmpegService _ffmpegService;
     private readonly IExportQueue _exportQueue;
     private readonly IAppLogger _logger;
-    private readonly Dispatcher _dispatcher;
     private readonly List<string> _lastExportedFiles = [];
 
     private Func<(MediaInfo? Media, IReadOnlyList<Segment> Segments, IReadOnlyList<double> Keyframes)>? _sourceProvider;
-    private Func<int, bool, FastCutWarningChoice>? _fastCutWarningPrompt;
-    private Func<IReadOnlyList<string>, ConflictPolicy?>? _conflictPrompt;
-    private Func<string, bool>? _confirmContinuePrompt;
-    private Action<string>? _errorPrompt;
+    private Func<int, bool, Task<FastCutWarningChoice>>? _fastCutWarningPrompt;
+    private Func<IReadOnlyList<string>, Task<ConflictPolicy?>>? _conflictPrompt;
+    private Func<string, Task<bool>>? _confirmContinuePrompt;
+    private Func<string, Task>? _errorPrompt;
+    private Func<string?, Task<string?>>? _pickFolderPrompt;
+    private Func<string, Task>? _copyTextAction;
 
     private CancellationTokenSource? _encoderDetectCts;
     private CancellationTokenSource? _exportCts;
@@ -125,10 +134,10 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
     [NotifyPropertyChangedFor(nameof(TaskbarProgressState))]
     private bool _hasExportErrors;
 
-    public TaskbarItemProgressState TaskbarProgressState =>
+    public AppTaskbarState TaskbarProgressState =>
         IsExporting
-            ? TaskbarItemProgressState.Normal
-            : (HasExportErrors ? TaskbarItemProgressState.Error : TaskbarItemProgressState.None);
+            ? AppTaskbarState.Normal
+            : (HasExportErrors ? AppTaskbarState.Error : AppTaskbarState.None);
 
     public string PreviewFileName
     {
@@ -182,21 +191,24 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
         _ffmpegService = ffmpegService;
         _exportQueue = exportQueue;
         _logger = logger;
-        _dispatcher = Application.Current.Dispatcher;
     }
 
     public void ConfigureBridges(
         Func<(MediaInfo? Media, IReadOnlyList<Segment> Segments, IReadOnlyList<double> Keyframes)> sourceProvider,
-        Func<int, bool, FastCutWarningChoice> fastCutWarningPrompt,
-        Func<IReadOnlyList<string>, ConflictPolicy?> conflictPrompt,
-        Func<string, bool> confirmContinuePrompt,
-        Action<string> errorPrompt)
+        Func<int, bool, Task<FastCutWarningChoice>> fastCutWarningPrompt,
+        Func<IReadOnlyList<string>, Task<ConflictPolicy?>> conflictPrompt,
+        Func<string, Task<bool>> confirmContinuePrompt,
+        Func<string, Task> errorPrompt,
+        Func<string?, Task<string?>> pickFolderPrompt,
+        Func<string, Task> copyTextAction)
     {
         _sourceProvider = sourceProvider;
         _fastCutWarningPrompt = fastCutWarningPrompt;
         _conflictPrompt = conflictPrompt;
         _confirmContinuePrompt = confirmContinuePrompt;
         _errorPrompt = errorPrompt;
+        _pickFolderPrompt = pickFolderPrompt;
+        _copyTextAction = copyTextAction;
     }
 
     public void OnVideoOpened(MediaInfo media)
@@ -330,7 +342,10 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
 
         if (enabledSegments.Count == 0)
         {
-            _errorPrompt?.Invoke("Aucun segment inclus à exporter.");
+            if (_errorPrompt is not null)
+            {
+                await _errorPrompt.Invoke("Aucun segment inclus à exporter.");
+            }
             return;
         }
 
@@ -343,7 +358,10 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
 
         if (!folderOk)
         {
-            _errorPrompt?.Invoke(folderError ?? "Dossier de sortie invalide.");
+            if (_errorPrompt is not null)
+            {
+                await _errorPrompt.Invoke(folderError ?? "Dossier de sortie invalide.");
+            }
             return;
         }
 
@@ -358,7 +376,9 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
         {
             if (keyframesSnapshot.Count == 0)
             {
-                FastCutWarningChoice choice = _fastCutWarningPrompt?.Invoke(0, true) ?? FastCutWarningChoice.FastAnyway;
+                FastCutWarningChoice choice = _fastCutWarningPrompt is not null
+                    ? await _fastCutWarningPrompt.Invoke(0, true)
+                    : FastCutWarningChoice.FastAnyway;
                 if (choice == FastCutWarningChoice.Cancel)
                 {
                     return;
@@ -378,8 +398,9 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
 
                 if (outOfKf.Count > 0)
                 {
-                    FastCutWarningChoice choice =
-                        _fastCutWarningPrompt?.Invoke(outOfKf.Count, false) ?? FastCutWarningChoice.FastAnyway;
+                    FastCutWarningChoice choice = _fastCutWarningPrompt is not null
+                        ? await _fastCutWarningPrompt.Invoke(outOfKf.Count, false)
+                        : FastCutWarningChoice.FastAnyway;
 
                     switch (choice)
                     {
@@ -417,13 +438,17 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
 
             if (!hasPrecise)
             {
-                _errorPrompt?.Invoke(
-                    $"Espace disque insuffisant dans le dossier de sortie.\n\nRequis estimé : {neededMb}\nDisponible : {freeMb}");
+                if (_errorPrompt is not null)
+                {
+                    await _errorPrompt.Invoke(
+                        $"Espace disque insuffisant dans le dossier de sortie.\n\nRequis estimé : {neededMb}\nDisponible : {freeMb}");
+                }
                 return;
             }
 
-            bool proceedLowSpace = _confirmContinuePrompt?.Invoke(
-                $"L'espace disque disponible semble faible par rapport à la taille estimée.\n\nRequis estimé : {neededMb}\nDisponible : {freeMb}\n\nContinuer l'export malgré tout ?") ?? false;
+            bool proceedLowSpace = _confirmContinuePrompt is not null
+                && await _confirmContinuePrompt.Invoke(
+                    $"L'espace disque disponible semble faible par rapport à la taille estimée.\n\nRequis estimé : {neededMb}\nDisponible : {freeMb}\n\nContinuer l'export malgré tout ?");
             if (!proceedLowSpace)
             {
                 return;
@@ -442,7 +467,9 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
 
         if (conflicts.Count > 0)
         {
-            ConflictPolicy? policy = _conflictPrompt?.Invoke(conflicts);
+            ConflictPolicy? policy = _conflictPrompt is not null
+                ? await _conflictPrompt.Invoke(conflicts)
+                : ConflictPolicy.AutoRename;
             if (policy is null)
             {
                 return;
@@ -471,21 +498,21 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand(CanExecute = nameof(CanBrowseFolder))]
-    private void BrowseFolder()
+    private async Task BrowseFolderAsync()
     {
-        var dialog = new OpenFolderDialog
+        if (_pickFolderPrompt is null)
         {
-            Title = "Choisir le dossier de sortie"
-        };
-
-        if (!string.IsNullOrWhiteSpace(OutputFolder) && Directory.Exists(OutputFolder))
-        {
-            dialog.InitialDirectory = OutputFolder;
+            return;
         }
 
-        if (dialog.ShowDialog() == true && !string.IsNullOrWhiteSpace(dialog.FolderName))
+        string? initialDir = !string.IsNullOrWhiteSpace(OutputFolder) && Directory.Exists(OutputFolder)
+            ? OutputFolder
+            : null;
+
+        string? selected = await _pickFolderPrompt.Invoke(initialDir);
+        if (!string.IsNullOrWhiteSpace(selected))
         {
-            OutputFolder = dialog.FolderName;
+            OutputFolder = selected;
         }
     }
 
@@ -524,16 +551,16 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
         => !string.IsNullOrWhiteSpace(OutputFolder) && Directory.Exists(OutputFolder);
 
     [RelayCommand]
-    private void CopyItemTechnicalDetails(ExportItemViewModel? item)
+    private async Task CopyItemTechnicalDetailsAsync(ExportItemViewModel? item)
     {
-        if (item is null || string.IsNullOrWhiteSpace(item.TechnicalDetails))
+        if (item is null || string.IsNullOrWhiteSpace(item.TechnicalDetails) || _copyTextAction is null)
         {
             return;
         }
 
         try
         {
-            Clipboard.SetText(item.TechnicalDetails);
+            await _copyTextAction.Invoke(item.TechnicalDetails);
         }
         catch (Exception ex)
         {
@@ -641,7 +668,7 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
 
         void OnJobStarted(int jobIdx)
         {
-            _dispatcher.BeginInvoke(() =>
+            Dispatcher.UIThread.Post(() =>
             {
                 if (_disposed || jobIdx < 0 || jobIdx >= Items.Count)
                 {
@@ -659,7 +686,7 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
 
         void OnJobCompleted(int jobIdx, ExportResult res)
         {
-            _dispatcher.BeginInvoke(() =>
+            Dispatcher.UIThread.Post(() =>
             {
                 if (_disposed || jobIdx < 0 || jobIdx >= Items.Count)
                 {
@@ -736,7 +763,7 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
             {
                 try
                 {
-                    SystemSounds.Asterisk.Play();
+                    MessageBeep(MbIconAsterisk);
                 }
                 catch
                 {

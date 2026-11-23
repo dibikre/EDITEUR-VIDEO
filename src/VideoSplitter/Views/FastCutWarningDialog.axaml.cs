@@ -1,4 +1,5 @@
-using System.Windows;
+using Avalonia.Controls;
+using Avalonia.Interactivity;
 
 namespace VideoSplitter.Views;
 
@@ -12,7 +13,10 @@ public enum FastCutWarningChoice
 
 public partial class FastCutWarningDialog : Window
 {
-    public FastCutWarningChoice Choice { get; private set; } = FastCutWarningChoice.Cancel;
+    public FastCutWarningDialog()
+        : this(0, false)
+    {
+    }
 
     public FastCutWarningDialog(int outOfKeyframeCount, bool keyframesUnavailable)
     {
@@ -25,8 +29,8 @@ public partial class FastCutWarningDialog : Window
             DetailTextBlock.Text =
                 "En mode Rapide, une coupe hors keyframe est décalée vers la keyframe précédente.";
             FastAnywayButton.Content = "Continuer";
-            PreciseSubsetButton.Visibility = Visibility.Collapsed;
-            AllPreciseButton.Visibility = Visibility.Collapsed;
+            PreciseSubsetButton.IsVisible = false;
+            AllPreciseButton.IsVisible = false;
         }
         else
         {
@@ -37,27 +41,15 @@ public partial class FastCutWarningDialog : Window
         }
     }
 
-    private void OnFastAnywayClick(object sender, RoutedEventArgs e)
-    {
-        Choice = FastCutWarningChoice.FastAnyway;
-        DialogResult = true;
-    }
+    private void OnFastAnywayClick(object? sender, RoutedEventArgs e)
+        => Close(FastCutWarningChoice.FastAnyway);
 
-    private void OnPreciseSubsetClick(object sender, RoutedEventArgs e)
-    {
-        Choice = FastCutWarningChoice.PreciseForOutOfKeyframe;
-        DialogResult = true;
-    }
+    private void OnPreciseSubsetClick(object? sender, RoutedEventArgs e)
+        => Close(FastCutWarningChoice.PreciseForOutOfKeyframe);
 
-    private void OnAllPreciseClick(object sender, RoutedEventArgs e)
-    {
-        Choice = FastCutWarningChoice.AllPrecise;
-        DialogResult = true;
-    }
+    private void OnAllPreciseClick(object? sender, RoutedEventArgs e)
+        => Close(FastCutWarningChoice.AllPrecise);
 
-    private void OnCancelClick(object sender, RoutedEventArgs e)
-    {
-        Choice = FastCutWarningChoice.Cancel;
-        DialogResult = false;
-    }
+    private void OnCancelClick(object? sender, RoutedEventArgs e)
+        => Close(FastCutWarningChoice.Cancel);
 }

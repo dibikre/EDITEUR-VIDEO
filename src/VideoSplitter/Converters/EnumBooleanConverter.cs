@@ -1,11 +1,12 @@
 using System.Globalization;
-using System.Windows.Data;
+using Avalonia.Data;
+using Avalonia.Data.Converters;
 
 namespace VideoSplitter.Converters;
 
 public sealed class EnumBooleanConverter : IValueConverter
 {
-    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         if (value is null || parameter is null)
         {
@@ -20,11 +21,11 @@ public sealed class EnumBooleanConverter : IValueConverter
         return Equals(value, parameter);
     }
 
-    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         if (value is not true || parameter is null)
         {
-            return Binding.DoNothing;
+            return BindingOperations.DoNothing;
         }
 
         if (parameter is string paramString)

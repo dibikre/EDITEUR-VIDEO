@@ -1,11 +1,10 @@
-<Window x:Class="VideoSplitter.Views.ExportConflictDialog"
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+<Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Style="{StaticResource DarkWindowStyle}"
+        x:Class="VideoSplitter.Views.ExportConflictDialog"
         Title="VideoSplitter — Fichiers existants"
         Width="560"
         SizeToContent="Height"
-        ResizeMode="NoResize"
+        CanResize="False"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False">
     <Border Background="{StaticResource SurfaceBrush}" Padding="18">
@@ -29,7 +28,7 @@
                         Click="OnOverwriteClick"
                         Margin="0,0,8,4" />
                 <Button Content="Renommer automatiquement"
-                        Style="{StaticResource PrimaryButtonStyle}"
+                        Classes="primary"
                         Click="OnAutoRenameClick"
                         Margin="0,0,8,4" />
                 <Button Content="Ignorer ceux qui existent"

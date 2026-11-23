@@ -14,7 +14,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public EditViewModel Edit { get; }
     public ExportViewModel Export { get; }
 
-    public Func<bool>? ConfirmAbortExportForOpen { get; set; }
+    public Func<Task<bool>>? ConfirmAbortExportForOpenAsync { get; set; }
 
     [ObservableProperty]
     private string _title = "VideoSplitter";
@@ -50,7 +50,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             return true;
         }
 
-        if (ConfirmAbortExportForOpen is null || !ConfirmAbortExportForOpen.Invoke())
+        if (ConfirmAbortExportForOpenAsync is null || !await ConfirmAbortExportForOpenAsync.Invoke())
         {
             return false;
         }

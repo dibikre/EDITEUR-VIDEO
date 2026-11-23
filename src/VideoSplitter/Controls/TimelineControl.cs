@@ -1,16 +1,19 @@
 using System.Diagnostics;
 using System.Globalization;
-using System.Windows;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Threading;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Data;
+using Avalonia.Input;
+using Avalonia.Media;
+using Avalonia.Media.Immutable;
+using Avalonia.Threading;
 using VideoSplitter.Editing;
 using VideoSplitter.Models;
 using VideoSplitter.Services;
 
 namespace VideoSplitter.Controls;
 
-public sealed class TimelineControl : FrameworkElement
+public sealed class TimelineControl : Control
 {
     public const double TotalTimelineHeight = 135.0;
     private const double RulerHeight = 24.0;
@@ -38,50 +41,46 @@ public sealed class TimelineControl : FrameworkElement
         60.0, 120.0, 300.0, 600.0, 900.0, 1800.0, 3600.0, 7200.0
     ];
 
-    private readonly VisualCollection _children;
-    private readonly DrawingVisual _backgroundVisual = new();
-    private readonly DrawingVisual _segmentsVisual = new();
-    private readonly DrawingVisual _playheadVisual = new();
-    private readonly DrawingVisual _hoverVisual = new();
+    private static readonly Cursor HandCursor = new(StandardCursorType.Hand);
+    private static readonly Cursor ResizeHorizontalCursor = new(StandardCursorType.SizeWestEast);
+
     private readonly ThumbnailHoverPopup _hoverPopup = new();
     private readonly DispatcherTimer _edgeScrollTimer;
     private readonly Dictionary<string, FormattedText> _labelCache = new(MaxFormattedTextCacheEntries);
     private readonly Dictionary<SegmentLabelKey, FormattedText> _segmentLabelCache = new(MaxFormattedTextCacheEntries);
 
-    // Ressources graphiques resolues une fois et gelees
-    private Brush _backgroundBrush = Brushes.Transparent;
-    private Brush _rulerBackgroundBrush = Brushes.Transparent;
-    private Brush _tilePlaceholderBrush = Brushes.Transparent;
-    private Brush _textPrimaryBrush = Brushes.White;
-    private Brush _textSecondaryBrush = Brushes.Gray;
-    private Brush _textMutedBrush = Brushes.Gray;
-    private Brush _playheadBrush = Brushes.DodgerBlue;
-    private Brush _segmentEvenBrush = Brushes.DarkSlateBlue;
-    private Brush _segmentOddBrush = Brushes.SlateBlue;
-    private Brush _segmentDisabledBrush = Brushes.DimGray;
-    private Brush _disabledFilmstripScrimBrush = Brushes.Transparent;
-    private Brush _markerBrush = Brushes.Orange;
-    private Brush _markerSelectedBrush = Brushes.Red;
-    private Pen _borderPen = null!;
-    private Pen _majorTickPen = null!;
-    private Pen _minorTickPen = null!;
-    private Pen _playheadPen = null!;
-    private Pen _hoverPen = null!;
-    private Pen _segmentBorderPen = null!;
-    private Pen _segmentSelectedPen = null!;
-    private Pen _markerPen = null!;
-    private Pen _markerSelectedPen = null!;
-    private Pen _markerHandleOutlinePen = null!;
+    // Ressources graphiques immuables
+    private IBrush _backgroundBrush = Brushes.Transparent;
+    private IBrush _rulerBackgroundBrush = Brushes.Transparent;
+    private IBrush _tilePlaceholderBrush = Brushes.Transparent;
+    private IBrush _textPrimaryBrush = Brushes.White;
+    private IBrush _textSecondaryBrush = Brushes.Gray;
+    private IBrush _textMutedBrush = Brushes.Gray;
+    private IBrush _playheadBrush = Brushes.DodgerBlue;
+    private IBrush _segmentEvenBrush = Brushes.DarkSlateBlue;
+    private IBrush _segmentOddBrush = Brushes.SlateBlue;
+    private IBrush _segmentDisabledBrush = Brushes.DimGray;
+    private IBrush _disabledFilmstripScrimBrush = Brushes.Transparent;
+    private IBrush _markerBrush = Brushes.Orange;
+    private IBrush _markerSelectedBrush = Brushes.Red;
+    private IPen _borderPen = null!;
+    private IPen _majorTickPen = null!;
+    private IPen _minorTickPen = null!;
+    private IPen _playheadPen = null!;
+    private IPen _hoverPen = null!;
+    private IPen _segmentBorderPen = null!;
+    private IPen _segmentSelectedPen = null!;
+    private IPen _markerPen = null!;
+    private IPen _markerSelectedPen = null!;
+    private IPen _markerHandleOutlinePen = null!;
     private StreamGeometry _markerDiamondGeometry = null!;
-    private Typeface _labelTypeface = null!;
-    private Typeface _emptyTypeface = null!;
+    private Typeface _labelTypeface;
+    private Typeface _emptyTypeface;
     private bool _resourcesInitialized;
 
-    // Etat de rendu groupe
-    private bool _backgroundDirty = true;
-    private bool _segmentsDirty = true;
-    private bool _playheadDirty = true;
+    // Etat de rendu regroupe
     private bool _renderScheduled;
+    private bool _isAttached;
 
     // Etat d'extrapolation du playhead
     private bool _isRenderingSubscribed;
@@ -89,6 +88,7 @@ public sealed class TimelineControl : FrameworkElement
     private long _anchorTimestampTicks;
 
     // Etat d'interaction souris / suivi
+    private IPointer? _capturedPointer;
     private bool _isDragging;
     private bool _isDraggingMarker;
     private bool _hasMarkerDragMoved;
@@ -100,183 +100,157 @@ public sealed class TimelineControl : FrameworkElement
     private double _hoverX;
     private double _lastDragX;
     private double _dragPositionSeconds;
+    private KeyModifiers _lastKeyModifiers;
     private long _followSuspendedUntilTick;
     private bool _isUpdatingViewportProps;
 
-    public static readonly DependencyProperty DurationProperty = DependencyProperty.Register(
-        nameof(Duration),
-        typeof(TimeSpan),
-        typeof(TimelineControl),
-        new FrameworkPropertyMetadata(TimeSpan.Zero, OnDurationPropertyChanged));
+    public static readonly StyledProperty<TimeSpan> DurationProperty =
+        AvaloniaProperty.Register<TimelineControl, TimeSpan>(nameof(Duration), TimeSpan.Zero);
 
-    public static readonly DependencyProperty PositionProperty = DependencyProperty.Register(
-        nameof(Position),
-        typeof(TimeSpan),
-        typeof(TimelineControl),
-        new FrameworkPropertyMetadata(TimeSpan.Zero, OnPositionPropertyChanged));
+    public static readonly StyledProperty<TimeSpan> PositionProperty =
+        AvaloniaProperty.Register<TimelineControl, TimeSpan>(nameof(Position), TimeSpan.Zero);
 
-    public static readonly DependencyProperty IsPlayingProperty = DependencyProperty.Register(
-        nameof(IsPlaying),
-        typeof(bool),
-        typeof(TimelineControl),
-        new FrameworkPropertyMetadata(false, OnIsPlayingPropertyChanged));
+    public static readonly StyledProperty<bool> IsPlayingProperty =
+        AvaloniaProperty.Register<TimelineControl, bool>(nameof(IsPlaying), false);
 
-    public static readonly DependencyProperty PlaybackSpeedProperty = DependencyProperty.Register(
-        nameof(PlaybackSpeed),
-        typeof(double),
-        typeof(TimelineControl),
-        new FrameworkPropertyMetadata(1.0, OnPlaybackSpeedPropertyChanged));
+    public static readonly StyledProperty<double> PlaybackSpeedProperty =
+        AvaloniaProperty.Register<TimelineControl, double>(nameof(PlaybackSpeed), 1.0);
 
-    public static readonly DependencyProperty ThumbnailsProperty = DependencyProperty.Register(
-        nameof(Thumbnails),
-        typeof(IThumbnailProvider),
-        typeof(TimelineControl),
-        new FrameworkPropertyMetadata(null, OnThumbnailsPropertyChanged));
+    public static readonly StyledProperty<IThumbnailProvider?> ThumbnailsProperty =
+        AvaloniaProperty.Register<TimelineControl, IThumbnailProvider?>(nameof(Thumbnails), null);
 
-    public static readonly DependencyProperty PixelsPerSecondProperty = DependencyProperty.Register(
-        nameof(PixelsPerSecond),
-        typeof(double),
-        typeof(TimelineControl),
-        new FrameworkPropertyMetadata(
+    public static readonly StyledProperty<double> PixelsPerSecondProperty =
+        AvaloniaProperty.Register<TimelineControl, double>(
+            nameof(PixelsPerSecond),
             10.0,
-            FrameworkPropertyMetadataOptions.BindsTwoWayByDefault,
-            OnViewportPropertyChanged));
+            defaultBindingMode: BindingMode.TwoWay);
 
-    public static readonly DependencyProperty ScrollOffsetSecondsProperty = DependencyProperty.Register(
-        nameof(ScrollOffsetSeconds),
-        typeof(double),
-        typeof(TimelineControl),
-        new FrameworkPropertyMetadata(
+    public static readonly StyledProperty<double> ScrollOffsetSecondsProperty =
+        AvaloniaProperty.Register<TimelineControl, double>(
+            nameof(ScrollOffsetSeconds),
             0.0,
-            FrameworkPropertyMetadataOptions.BindsTwoWayByDefault,
-            OnViewportPropertyChanged));
+            defaultBindingMode: BindingMode.TwoWay);
 
-    public static readonly DependencyProperty IsFitToWindowProperty = DependencyProperty.Register(
-        nameof(IsFitToWindow),
-        typeof(bool),
-        typeof(TimelineControl),
-        new FrameworkPropertyMetadata(
+    public static readonly StyledProperty<bool> IsFitToWindowProperty =
+        AvaloniaProperty.Register<TimelineControl, bool>(
+            nameof(IsFitToWindow),
             true,
-            FrameworkPropertyMetadataOptions.BindsTwoWayByDefault,
-            OnIsFitToWindowPropertyChanged));
+            defaultBindingMode: BindingMode.TwoWay);
 
-    public static readonly DependencyProperty FollowPlaybackProperty = DependencyProperty.Register(
-        nameof(FollowPlayback),
-        typeof(bool),
-        typeof(TimelineControl),
-        new FrameworkPropertyMetadata(true));
+    public static readonly StyledProperty<bool> FollowPlaybackProperty =
+        AvaloniaProperty.Register<TimelineControl, bool>(nameof(FollowPlayback), true);
 
-    public static readonly DependencyProperty SegmentsProperty = DependencyProperty.Register(
-        nameof(Segments),
-        typeof(IReadOnlyList<Segment>),
-        typeof(TimelineControl),
-        new FrameworkPropertyMetadata(null, OnSegmentsPropertyChanged));
+    public static readonly StyledProperty<IReadOnlyList<Segment>?> SegmentsProperty =
+        AvaloniaProperty.Register<TimelineControl, IReadOnlyList<Segment>?>(nameof(Segments), null);
 
-    public static readonly DependencyProperty SelectedSegmentIdProperty = DependencyProperty.Register(
-        nameof(SelectedSegmentId),
-        typeof(Guid?),
-        typeof(TimelineControl),
-        new FrameworkPropertyMetadata(null, OnSegmentSelectionPropertyChanged));
+    public static readonly StyledProperty<Guid?> SelectedSegmentIdProperty =
+        AvaloniaProperty.Register<TimelineControl, Guid?>(nameof(SelectedSegmentId), null);
 
-    public static readonly DependencyProperty SelectedMarkerIndexProperty = DependencyProperty.Register(
-        nameof(SelectedMarkerIndex),
-        typeof(int?),
-        typeof(TimelineControl),
-        new FrameworkPropertyMetadata(null, OnSegmentSelectionPropertyChanged));
+    public static readonly StyledProperty<int?> SelectedMarkerIndexProperty =
+        AvaloniaProperty.Register<TimelineControl, int?>(nameof(SelectedMarkerIndex), null);
 
-    public static readonly DependencyProperty KeyframesProperty = DependencyProperty.Register(
-        nameof(Keyframes),
-        typeof(IReadOnlyList<double>),
-        typeof(TimelineControl),
-        new FrameworkPropertyMetadata(null));
+    public static readonly StyledProperty<IReadOnlyList<double>?> KeyframesProperty =
+        AvaloniaProperty.Register<TimelineControl, IReadOnlyList<double>?>(nameof(Keyframes), null);
 
-    public static readonly DependencyProperty SnapToKeyframesProperty = DependencyProperty.Register(
-        nameof(SnapToKeyframes),
-        typeof(bool),
-        typeof(TimelineControl),
-        new FrameworkPropertyMetadata(true));
+    public static readonly StyledProperty<bool> SnapToKeyframesProperty =
+        AvaloniaProperty.Register<TimelineControl, bool>(nameof(SnapToKeyframes), true);
+
+    static TimelineControl()
+    {
+        DurationProperty.Changed.AddClassHandler<TimelineControl>((c, _) => c.HandleDurationChanged());
+        PositionProperty.Changed.AddClassHandler<TimelineControl>((c, _) => c.HandlePositionChanged());
+        IsPlayingProperty.Changed.AddClassHandler<TimelineControl>((c, _) => c.HandleIsPlayingChanged());
+        PlaybackSpeedProperty.Changed.AddClassHandler<TimelineControl>((c, _) => c.ReanchorPlayhead(c.GetCurrentExtrapolatedSeconds()));
+        ThumbnailsProperty.Changed.AddClassHandler<TimelineControl>((c, e) => c.HandleThumbnailsChanged(e));
+        PixelsPerSecondProperty.Changed.AddClassHandler<TimelineControl>((c, _) => c.HandleViewportPropertyChanged());
+        ScrollOffsetSecondsProperty.Changed.AddClassHandler<TimelineControl>((c, _) => c.HandleViewportPropertyChanged());
+        IsFitToWindowProperty.Changed.AddClassHandler<TimelineControl>((c, e) => c.HandleIsFitToWindowChanged(e));
+        SegmentsProperty.Changed.AddClassHandler<TimelineControl>((c, _) => c.HandleSegmentsChanged());
+        SelectedSegmentIdProperty.Changed.AddClassHandler<TimelineControl>((c, _) => c.ScheduleRender());
+        SelectedMarkerIndexProperty.Changed.AddClassHandler<TimelineControl>((c, _) => c.ScheduleRender());
+    }
 
     public TimeSpan Duration
     {
-        get => (TimeSpan)GetValue(DurationProperty);
+        get => GetValue(DurationProperty);
         set => SetValue(DurationProperty, value);
     }
 
     public TimeSpan Position
     {
-        get => (TimeSpan)GetValue(PositionProperty);
+        get => GetValue(PositionProperty);
         set => SetValue(PositionProperty, value);
     }
 
     public bool IsPlaying
     {
-        get => (bool)GetValue(IsPlayingProperty);
+        get => GetValue(IsPlayingProperty);
         set => SetValue(IsPlayingProperty, value);
     }
 
     public double PlaybackSpeed
     {
-        get => (double)GetValue(PlaybackSpeedProperty);
+        get => GetValue(PlaybackSpeedProperty);
         set => SetValue(PlaybackSpeedProperty, value);
     }
 
     public IThumbnailProvider? Thumbnails
     {
-        get => (IThumbnailProvider?)GetValue(ThumbnailsProperty);
+        get => GetValue(ThumbnailsProperty);
         set => SetValue(ThumbnailsProperty, value);
     }
 
     public double PixelsPerSecond
     {
-        get => (double)GetValue(PixelsPerSecondProperty);
+        get => GetValue(PixelsPerSecondProperty);
         set => SetValue(PixelsPerSecondProperty, value);
     }
 
     public double ScrollOffsetSeconds
     {
-        get => (double)GetValue(ScrollOffsetSecondsProperty);
+        get => GetValue(ScrollOffsetSecondsProperty);
         set => SetValue(ScrollOffsetSecondsProperty, value);
     }
 
     public bool IsFitToWindow
     {
-        get => (bool)GetValue(IsFitToWindowProperty);
+        get => GetValue(IsFitToWindowProperty);
         set => SetValue(IsFitToWindowProperty, value);
     }
 
     public bool FollowPlayback
     {
-        get => (bool)GetValue(FollowPlaybackProperty);
+        get => GetValue(FollowPlaybackProperty);
         set => SetValue(FollowPlaybackProperty, value);
     }
 
     public IReadOnlyList<Segment>? Segments
     {
-        get => (IReadOnlyList<Segment>?)GetValue(SegmentsProperty);
+        get => GetValue(SegmentsProperty);
         set => SetValue(SegmentsProperty, value);
     }
 
     public Guid? SelectedSegmentId
     {
-        get => (Guid?)GetValue(SelectedSegmentIdProperty);
+        get => GetValue(SelectedSegmentIdProperty);
         set => SetValue(SelectedSegmentIdProperty, value);
     }
 
     public int? SelectedMarkerIndex
     {
-        get => (int?)GetValue(SelectedMarkerIndexProperty);
+        get => GetValue(SelectedMarkerIndexProperty);
         set => SetValue(SelectedMarkerIndexProperty, value);
     }
 
     public IReadOnlyList<double>? Keyframes
     {
-        get => (IReadOnlyList<double>?)GetValue(KeyframesProperty);
+        get => GetValue(KeyframesProperty);
         set => SetValue(KeyframesProperty, value);
     }
 
     public bool SnapToKeyframes
     {
-        get => (bool)GetValue(SnapToKeyframesProperty);
+        get => GetValue(SnapToKeyframesProperty);
         set => SetValue(SnapToKeyframesProperty, value);
     }
 
@@ -290,31 +264,15 @@ public sealed class TimelineControl : FrameworkElement
 
     public TimelineControl()
     {
-        _children = new VisualCollection(this)
-        {
-            _backgroundVisual,
-            _segmentsVisual,
-            _playheadVisual,
-            _hoverVisual
-        };
-
-        Cursor = Cursors.Hand;
+        Cursor = HandCursor;
         ClipToBounds = true;
-        SnapsToDevicePixels = true;
 
         _edgeScrollTimer = new DispatcherTimer(DispatcherPriority.Input)
         {
             Interval = TimeSpan.FromMilliseconds(30)
         };
         _edgeScrollTimer.Tick += OnEdgeScrollTick;
-
-        Loaded += OnLoaded;
-        Unloaded += OnUnloaded;
     }
-
-    protected override int VisualChildrenCount => _children.Count;
-
-    protected override Visual GetVisualChild(int index) => _children[index];
 
     protected override Size MeasureOverride(Size availableSize)
     {
@@ -325,135 +283,87 @@ public sealed class TimelineControl : FrameworkElement
     protected override Size ArrangeOverride(Size finalSize)
     {
         SyncViewportToSize(finalSize.Width);
-        InvalidateBackground();
+        ScheduleRender();
         return finalSize;
     }
 
-    protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        base.OnDpiChanged(oldDpi, newDpi);
-        _labelCache.Clear();
-        _segmentLabelCache.Clear();
-        InvalidateBackground();
-    }
-
-    private void OnLoaded(object sender, RoutedEventArgs e)
-    {
+        base.OnAttachedToVisualTree(e);
+        _isAttached = true;
         EnsureRenderResources();
-        SyncViewportToSize(ActualWidth);
+        SyncViewportToSize(Bounds.Width);
         UpdateRenderingSubscription();
-        InvalidateBackground();
+        ScheduleRender();
     }
 
-    private void OnUnloaded(object sender, RoutedEventArgs e)
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
+        base.OnDetachedFromVisualTree(e);
+        _isAttached = false;
         _edgeScrollTimer.Stop();
         _hoverPopup.Hide();
         UnsubscribeRendering();
     }
 
-    private static void OnDurationPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    private void HandleThumbnailsChanged(AvaloniaPropertyChangedEventArgs e)
     {
-        if (d is TimelineControl ctrl)
+        if (e.OldValue is IThumbnailProvider oldProvider)
         {
-            ctrl.HandleDurationChanged();
+            oldProvider.ThumbnailsChanged -= OnProviderThumbnailsChanged;
+        }
+
+        if (e.NewValue is IThumbnailProvider newProvider)
+        {
+            newProvider.ThumbnailsChanged += OnProviderThumbnailsChanged;
+        }
+
+        ScheduleRender();
+    }
+
+    private void HandleViewportPropertyChanged()
+    {
+        if (_isUpdatingViewportProps)
+        {
+            return;
+        }
+
+        ClampViewportProps();
+        ScheduleRender();
+        ViewportChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void HandleIsFitToWindowChanged(AvaloniaPropertyChangedEventArgs e)
+    {
+        if (!_isUpdatingViewportProps && e.NewValue is true)
+        {
+            SyncViewportToSize(Bounds.Width);
+            ScheduleRender();
         }
     }
 
-    private static void OnPositionPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    private void HandleSegmentsChanged()
     {
-        if (d is TimelineControl ctrl)
+        if (_isDraggingMarker)
         {
-            ctrl.HandlePositionChanged();
+            ResetMarkerDragState();
         }
-    }
 
-    private static void OnIsPlayingPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
-    {
-        if (d is TimelineControl ctrl)
-        {
-            ctrl.HandleIsPlayingChanged();
-        }
-    }
-
-    private static void OnPlaybackSpeedPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
-    {
-        if (d is TimelineControl ctrl)
-        {
-            ctrl.ReanchorPlayhead(ctrl.GetCurrentExtrapolatedSeconds());
-        }
-    }
-
-    private static void OnThumbnailsPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
-    {
-        if (d is TimelineControl ctrl)
-        {
-            if (e.OldValue is IThumbnailProvider oldProvider)
-            {
-                oldProvider.ThumbnailsChanged -= ctrl.OnProviderThumbnailsChanged;
-            }
-
-            if (e.NewValue is IThumbnailProvider newProvider)
-            {
-                newProvider.ThumbnailsChanged += ctrl.OnProviderThumbnailsChanged;
-            }
-
-            ctrl.InvalidateBackground();
-        }
-    }
-
-    private static void OnViewportPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
-    {
-        if (d is TimelineControl ctrl && !ctrl._isUpdatingViewportProps)
-        {
-            ctrl.ClampViewportProps();
-            ctrl.InvalidateBackground();
-            ctrl.ViewportChanged?.Invoke(ctrl, EventArgs.Empty);
-        }
-    }
-
-    private static void OnIsFitToWindowPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
-    {
-        if (d is TimelineControl ctrl && !ctrl._isUpdatingViewportProps && (bool)e.NewValue)
-        {
-            ctrl.SyncViewportToSize(ctrl.ActualWidth);
-            ctrl.InvalidateBackground();
-        }
-    }
-
-    private static void OnSegmentsPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
-    {
-        if (d is TimelineControl ctrl)
-        {
-            if (ctrl._isDraggingMarker)
-            {
-                ctrl.ResetMarkerDragState();
-            }
-
-            ctrl.InvalidateSegments();
-        }
-    }
-
-    private static void OnSegmentSelectionPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
-    {
-        if (d is TimelineControl ctrl)
-        {
-            ctrl.InvalidateSegments();
-        }
+        ScheduleRender();
     }
 
     private void OnProviderThumbnailsChanged(object? sender, EventArgs e)
     {
-        InvalidateBackground();
+        ScheduleRender();
     }
 
     private void HandleDurationChanged()
     {
         _followSuspendedUntilTick = 0;
         ReanchorPlayhead(Math.Clamp(Position.TotalSeconds, 0.0, GetTotalSeconds()));
-        SyncViewportToSize(ActualWidth);
+        SyncViewportToSize(Bounds.Width);
         UpdateRenderingSubscription();
-        InvalidateBackground();
+        ScheduleRender();
         ViewportChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -465,7 +375,7 @@ public sealed class TimelineControl : FrameworkElement
 
         if (!_isDragging && !_isDraggingMarker)
         {
-            InvalidatePlayhead();
+            ScheduleRender();
         }
     }
 
@@ -474,7 +384,7 @@ public sealed class TimelineControl : FrameworkElement
         double currentSec = GetCurrentExtrapolatedSeconds();
         ReanchorPlayhead(currentSec);
         UpdateRenderingSubscription();
-        InvalidatePlayhead();
+        ScheduleRender();
     }
 
     private void ReanchorPlayhead(double positionSeconds)
@@ -485,13 +395,9 @@ public sealed class TimelineControl : FrameworkElement
 
     private void UpdateRenderingSubscription()
     {
-        if (IsPlaying && Duration > TimeSpan.Zero && IsLoaded)
+        if (IsPlaying && Duration > TimeSpan.Zero && _isAttached)
         {
-            if (!_isRenderingSubscribed)
-            {
-                CompositionTarget.Rendering += OnCompositionTargetRendering;
-                _isRenderingSubscribed = true;
-            }
+            StartAnimationLoop();
         }
         else
         {
@@ -499,42 +405,54 @@ public sealed class TimelineControl : FrameworkElement
         }
     }
 
-    private void UnsubscribeRendering()
+    private void StartAnimationLoop()
     {
         if (_isRenderingSubscribed)
         {
-            CompositionTarget.Rendering -= OnCompositionTargetRendering;
-            _isRenderingSubscribed = false;
+            return;
         }
+
+        if (TopLevel.GetTopLevel(this) is not { } topLevel)
+        {
+            return;
+        }
+
+        _isRenderingSubscribed = true;
+        topLevel.RequestAnimationFrame(OnAnimationFrame);
     }
 
-    private void OnCompositionTargetRendering(object? sender, EventArgs e)
+    private void UnsubscribeRendering()
     {
-        if (!IsPlaying || Duration <= TimeSpan.Zero)
+        _isRenderingSubscribed = false;
+    }
+
+    private void OnAnimationFrame(TimeSpan _)
+    {
+        if (!_isRenderingSubscribed || !_isAttached || !IsPlaying || Duration <= TimeSpan.Zero)
         {
-            UnsubscribeRendering();
+            _isRenderingSubscribed = false;
             return;
         }
 
         double currentPos = GetCurrentExtrapolatedSeconds();
 
-        if (FollowPlayback && !IsFollowSuspended() && ActualWidth > 0 && PixelsPerSecond > 0 && !IsFitToWindow)
+        if (FollowPlayback && !IsFollowSuspended() && Bounds.Width > 0 && PixelsPerSecond > 0 && !IsFitToWindow)
         {
-            double visibleDuration = ActualWidth / PixelsPerSecond;
+            double visibleDuration = Bounds.Width / PixelsPerSecond;
             double offset = ScrollOffsetSeconds;
             if (currentPos > offset + visibleDuration || currentPos < offset)
             {
-                double pagedOffset = ClampOffset(currentPos - (0.10 * visibleDuration), PixelsPerSecond, ActualWidth);
+                double pagedOffset = ClampOffset(currentPos - (0.10 * visibleDuration), PixelsPerSecond, Bounds.Width);
                 if (Math.Abs(pagedOffset - offset) > 0.0001)
                 {
                     SetViewportValues(PixelsPerSecond, pagedOffset, IsFitToWindow);
-                    InvalidateBackground();
                     ViewportChanged?.Invoke(this, EventArgs.Empty);
                 }
             }
         }
 
-        RenderPlayheadLayer();
+        InvalidateVisual();
+        TopLevel.GetTopLevel(this)?.RequestAnimationFrame(OnAnimationFrame);
     }
 
     public void NotifyUserNavigated()
@@ -550,12 +468,15 @@ public sealed class TimelineControl : FrameworkElement
             int idx = _dragMarkerIndex;
             TimeSpan original = TimeSpan.FromSeconds(_dragMarkerOriginalSeconds);
             ResetMarkerDragState();
-            ReleaseMouseCapture();
+            ReleasePointerCapture();
             _hoverPopup.Hide();
 
-            RenderSegmentsLayer();
-            RenderHoverLayer();
-            UpdateCursorForPoint(Mouse.GetPosition(this));
+            if (!Equals(Cursor, HandCursor))
+            {
+                Cursor = HandCursor;
+            }
+
+            InvalidateVisual();
             BoundaryDragCompleted?.Invoke(this, (idx, original, true));
             return true;
         }
@@ -564,9 +485,9 @@ public sealed class TimelineControl : FrameworkElement
         {
             _edgeScrollTimer.Stop();
             _isDragging = false;
-            ReleaseMouseCapture();
-            RenderPlayheadLayer();
-            RenderHoverLayer();
+            ReleasePointerCapture();
+            _hoverPopup.Hide();
+            InvalidateVisual();
             return true;
         }
 
@@ -576,7 +497,7 @@ public sealed class TimelineControl : FrameworkElement
     public void ZoomByFactorCentered(double factor)
     {
         double totalSeconds = GetTotalSeconds();
-        double width = ActualWidth;
+        double width = Bounds.Width;
         if (totalSeconds <= 0 || width <= 0)
         {
             return;
@@ -597,7 +518,7 @@ public sealed class TimelineControl : FrameworkElement
     private void ApplyZoomAtAnchor(double factor, double anchorTime, double anchorX)
     {
         double totalSeconds = GetTotalSeconds();
-        double width = ActualWidth;
+        double width = Bounds.Width;
         if (totalSeconds <= 0 || width <= 0)
         {
             return;
@@ -610,7 +531,7 @@ public sealed class TimelineControl : FrameworkElement
 
         NotifyUserNavigated();
         SetViewportValues(newPps, newOffset, isFit: false);
-        InvalidateBackground();
+        ScheduleRender();
         ViewportChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -640,7 +561,7 @@ public sealed class TimelineControl : FrameworkElement
     private void ClampViewportProps()
     {
         double totalSeconds = GetTotalSeconds();
-        double width = ActualWidth;
+        double width = Bounds.Width;
         if (totalSeconds <= 0 || width <= 0)
         {
             return;
@@ -732,27 +653,6 @@ public sealed class TimelineControl : FrameworkElement
         return GetCurrentExtrapolatedSeconds();
     }
 
-    private void InvalidateBackground()
-    {
-        _backgroundDirty = true;
-        _segmentsDirty = true;
-        _playheadDirty = true;
-        ScheduleRender();
-    }
-
-    private void InvalidateSegments()
-    {
-        _segmentsDirty = true;
-        _playheadDirty = true;
-        ScheduleRender();
-    }
-
-    private void InvalidatePlayhead()
-    {
-        _playheadDirty = true;
-        ScheduleRender();
-    }
-
     private void ScheduleRender()
     {
         if (_renderScheduled)
@@ -761,131 +661,63 @@ public sealed class TimelineControl : FrameworkElement
         }
 
         _renderScheduled = true;
-        Dispatcher.BeginInvoke(DispatcherPriority.Render, FlushPendingRenders);
+        Dispatcher.UIThread.Post(() =>
+        {
+            _renderScheduled = false;
+            InvalidateVisual();
+        }, DispatcherPriority.Render);
     }
 
-    private void FlushPendingRenders()
+    public override void Render(DrawingContext context)
     {
-        _renderScheduled = false;
-
-        if (_backgroundDirty)
-        {
-            _backgroundDirty = false;
-            RenderBackgroundLayer();
-        }
-
-        if (_segmentsDirty)
-        {
-            _segmentsDirty = false;
-            RenderSegmentsLayer();
-        }
-
-        if (_playheadDirty)
-        {
-            _playheadDirty = false;
-            RenderPlayheadLayer();
-        }
-    }
-
-    private void RenderBackgroundLayer()
-    {
+        base.Render(context);
         EnsureRenderResources();
 
-        using DrawingContext dc = _backgroundVisual.RenderOpen();
-
-        double width = ActualWidth;
-        double height = ActualHeight;
+        double width = Bounds.Width;
+        double height = Bounds.Height;
         if (width <= 0 || height <= 0)
         {
             return;
         }
 
-        // Remplissage complet pour garantir le hit-test sur toute la surface
-        dc.DrawRectangle(_backgroundBrush, null, new Rect(0, 0, width, height));
+        context.DrawRectangle(_backgroundBrush, null, new Rect(0, 0, width, height));
 
         double totalSeconds = GetTotalSeconds();
         if (totalSeconds <= 0 || PixelsPerSecond <= 0)
         {
-            DrawEmptyState(dc, width, height);
+            DrawEmptyState(context, width, height);
             return;
         }
 
         double pps = PixelsPerSecond;
         double offsetSeconds = ScrollOffsetSeconds;
-        double pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
 
-        DrawRuler(dc, width, totalSeconds, pps, offsetSeconds, pixelsPerDip);
-        DrawFilmstrip(dc, width, totalSeconds, pps, offsetSeconds);
-    }
+        DrawRuler(context, width, totalSeconds, pps, offsetSeconds);
+        DrawFilmstrip(context, width, totalSeconds, pps, offsetSeconds);
 
-    private void RenderSegmentsLayer()
-    {
-        EnsureRenderResources();
-
-        using DrawingContext dc = _segmentsVisual.RenderOpen();
-
-        double width = ActualWidth;
-        double height = ActualHeight;
-        double totalSeconds = GetTotalSeconds();
-        if (width <= 0 || height <= 0 || totalSeconds <= 0 || PixelsPerSecond <= 0)
+        if (Segments is { Count: > 0 } segments)
         {
-            return;
+            DrawSegments(context, width, totalSeconds, pps, offsetSeconds, segments);
+            DrawMarkers(context, width, totalSeconds, pps, offsetSeconds, segments);
         }
 
-        if (Segments is not { Count: > 0 } segments)
+        DrawPlayhead(context, width, height, totalSeconds, pps, offsetSeconds);
+
+        if (_isHovering)
         {
-            return;
+            DrawHoverLine(context, width, height);
         }
-
-        double pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
-        DrawSegments(dc, width, totalSeconds, PixelsPerSecond, ScrollOffsetSeconds, segments, pixelsPerDip);
-        DrawMarkers(dc, width, totalSeconds, PixelsPerSecond, ScrollOffsetSeconds, segments);
-    }
-
-    private void RenderPlayheadLayer()
-    {
-        EnsureRenderResources();
-
-        using DrawingContext dc = _playheadVisual.RenderOpen();
-
-        double width = ActualWidth;
-        double height = ActualHeight;
-        double totalSeconds = GetTotalSeconds();
-        if (width <= 0 || height <= 0 || totalSeconds <= 0 || PixelsPerSecond <= 0)
-        {
-            return;
-        }
-
-        DrawPlayhead(dc, width, height, totalSeconds, PixelsPerSecond, ScrollOffsetSeconds);
-    }
-
-    private void RenderHoverLayer()
-    {
-        EnsureRenderResources();
-
-        using DrawingContext dc = _hoverVisual.RenderOpen();
-
-        double width = ActualWidth;
-        double height = ActualHeight;
-        if (!_isHovering || width <= 0 || height <= 0 || GetTotalSeconds() <= 0)
-        {
-            return;
-        }
-
-        DrawHoverLine(dc, width, height);
     }
 
     private void DrawEmptyState(DrawingContext dc, double width, double height)
     {
-        double pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
         var text = new FormattedText(
             "Ouvrez une vidéo pour commencer",
             CultureInfo.CurrentCulture,
             FlowDirection.LeftToRight,
             _emptyTypeface,
             13.0,
-            _textMutedBrush,
-            pixelsPerDip);
+            _textMutedBrush);
 
         double x = Math.Max(0, (width - text.Width) / 2.0);
         double y = Math.Max(0, (height - text.Height) / 2.0);
@@ -897,8 +729,7 @@ public sealed class TimelineControl : FrameworkElement
         double width,
         double totalSeconds,
         double pps,
-        double offsetSeconds,
-        double pixelsPerDip)
+        double offsetSeconds)
     {
         dc.DrawRectangle(_rulerBackgroundBrush, null, new Rect(0, 0, width, RulerHeight));
         double bottomLineY = RulerHeight - 0.5;
@@ -936,7 +767,7 @@ public sealed class TimelineControl : FrameworkElement
             {
                 dc.DrawLine(_majorTickPen, new Point(alignedX, RulerHeight - 9.0), new Point(alignedX, RulerHeight - 1.0));
                 string labelText = FormatRulerLabel(tickTime, includeHours, includeDecimals);
-                FormattedText ft = GetOrCreateLabelText(labelText, pixelsPerDip);
+                FormattedText ft = GetOrCreateLabelText(labelText);
                 double labelX = alignedX + 4.0;
                 if (labelX + ft.Width <= width - 2.0)
                 {
@@ -978,8 +809,7 @@ public sealed class TimelineControl : FrameworkElement
         double offsetPx = offsetSeconds * pps;
         long firstTileIndex = Math.Max(0, (long)Math.Floor(offsetPx / tileWidth));
 
-        dc.PushClip(new RectangleGeometry(new Rect(0, FilmstripTop, visibleMediaWidth, FilmstripHeight)));
-        try
+        using (dc.PushClip(new Rect(0, FilmstripTop, visibleMediaWidth, FilmstripHeight)))
         {
             for (int i = 0; i < visibleTileCount; i++)
             {
@@ -992,21 +822,20 @@ public sealed class TimelineControl : FrameworkElement
 
                 double xCenter = x + (tileWidth / 2.0);
                 double timeSec = Math.Clamp((xCenter / pps) + offsetSeconds, 0.0, totalSeconds);
-
-                Brush? tileBrush = null;
-                if (provider is not null)
-                {
-                    int thumbIdx = provider.IndexForTime(TimeSpan.FromSeconds(timeSec));
-                    tileBrush = provider.GetThumbnailBrush(thumbIdx);
-                }
-
                 var tileRect = new Rect(x, FilmstripTop, tileWidth, FilmstripHeight);
-                dc.DrawRectangle(tileBrush ?? _tilePlaceholderBrush, _borderPen, tileRect);
+
+                if (provider is not null
+                    && provider.TryGetThumbnailTile(provider.IndexForTime(TimeSpan.FromSeconds(timeSec)), out IImage? sheet, out Rect sourceRect)
+                    && sheet is not null)
+                {
+                    dc.DrawImage(sheet, sourceRect, tileRect);
+                    dc.DrawRectangle(null, _borderPen, tileRect);
+                }
+                else
+                {
+                    dc.DrawRectangle(_tilePlaceholderBrush, _borderPen, tileRect);
+                }
             }
-        }
-        finally
-        {
-            dc.Pop();
         }
     }
 
@@ -1016,8 +845,7 @@ public sealed class TimelineControl : FrameworkElement
         double totalSeconds,
         double pps,
         double offsetSeconds,
-        IReadOnlyList<Segment> segments,
-        double pixelsPerDip)
+        IReadOnlyList<Segment> segments)
     {
         double visibleEnd = Math.Min(totalSeconds, offsetSeconds + (width / pps));
         int firstIdx = Math.Max(0, SegmentEditor.ContainingIndex(segments, TimeSpan.FromSeconds(offsetSeconds)) - 1);
@@ -1056,36 +884,32 @@ public sealed class TimelineControl : FrameworkElement
                 dc.DrawRectangle(_disabledFilmstripScrimBrush, null, new Rect(x1, FilmstripTop, segW, FilmstripHeight));
             }
 
-            Brush fill = !seg.Enabled
+            IBrush fill = !seg.Enabled
                 ? _segmentDisabledBrush
                 : (i % 2 == 0 ? _segmentEvenBrush : _segmentOddBrush);
 
             bool isSelected = selectedId == seg.Id;
-            Pen borderPen = isSelected ? _segmentSelectedPen : _segmentBorderPen;
+            IPen borderPen = isSelected ? _segmentSelectedPen : _segmentBorderPen;
 
             var bandRect = new Rect(x1, SegmentsBandTop, segW, SegmentsBandHeight);
             dc.DrawRectangle(fill, borderPen, bandRect);
 
             if (segW > 40.0 && !string.IsNullOrEmpty(seg.Name))
             {
-                FormattedText ft = GetOrCreateSegmentLabelText(seg.Name, segW, seg.Enabled, pixelsPerDip);
+                FormattedText ft = GetOrCreateSegmentLabelText(seg.Name, segW, seg.Enabled);
                 double textY = SegmentsBandTop + Math.Max(0.0, (SegmentsBandHeight - ft.Height) / 2.0);
                 double textX = x1 + 6.0;
                 double maxAllowedWidth = Math.Max(0.0, segW - 10.0);
+
                 if (ft.Width <= maxAllowedWidth)
                 {
                     dc.DrawText(ft, new Point(textX, textY));
                 }
                 else
                 {
-                    dc.PushClip(new RectangleGeometry(new Rect(textX, SegmentsBandTop, maxAllowedWidth, SegmentsBandHeight)));
-                    try
+                    using (dc.PushClip(new Rect(textX, SegmentsBandTop, maxAllowedWidth, SegmentsBandHeight)))
                     {
                         dc.DrawText(ft, new Point(textX, textY));
-                    }
-                    finally
-                    {
-                        dc.Pop();
                     }
                 }
             }
@@ -1129,19 +953,14 @@ public sealed class TimelineControl : FrameworkElement
 
             double alignedX = Math.Round(mx) + 0.5;
             bool isSelected = SelectedMarkerIndex == i || (_isDraggingMarker && i == _dragMarkerIndex);
-            Pen linePen = isSelected ? _markerSelectedPen : _markerPen;
-            Brush handleBrush = isSelected ? _markerSelectedBrush : _markerBrush;
+            IPen linePen = isSelected ? _markerSelectedPen : _markerPen;
+            IBrush handleBrush = isSelected ? _markerSelectedBrush : _markerBrush;
 
             dc.DrawLine(linePen, new Point(alignedX, RulerHeight), new Point(alignedX, bandBottom));
 
-            dc.PushTransform(new TranslateTransform(alignedX, FilmstripTop + 6.0));
-            try
+            using (dc.PushTransform(Matrix.CreateTranslation(alignedX, FilmstripTop + 6.0)))
             {
                 dc.DrawGeometry(handleBrush, _markerHandleOutlinePen, _markerDiamondGeometry);
-            }
-            finally
-            {
-                dc.Pop();
             }
         }
     }
@@ -1167,12 +986,12 @@ public sealed class TimelineControl : FrameworkElement
         var triangle = new StreamGeometry();
         using (StreamGeometryContext ctx = triangle.Open())
         {
-            ctx.BeginFigure(new Point(alignedX - 6.0, 2.0), isFilled: true, isClosed: true);
-            ctx.LineTo(new Point(alignedX + 6.0, 2.0), isStroked: false, isSmoothJoin: false);
-            ctx.LineTo(new Point(alignedX, 13.0), isStroked: false, isSmoothJoin: false);
+            ctx.BeginFigure(new Point(alignedX - 6.0, 2.0), true);
+            ctx.LineTo(new Point(alignedX + 6.0, 2.0));
+            ctx.LineTo(new Point(alignedX, 13.0));
+            ctx.EndFigure(true);
         }
 
-        triangle.Freeze();
         dc.DrawGeometry(_playheadBrush, null, triangle);
     }
 
@@ -1183,21 +1002,21 @@ public sealed class TimelineControl : FrameworkElement
         dc.DrawLine(_hoverPen, new Point(alignedX, 0.0), new Point(alignedX, height));
     }
 
-    protected override void OnMouseWheel(MouseWheelEventArgs e)
+    protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
     {
-        base.OnMouseWheel(e);
+        base.OnPointerWheelChanged(e);
 
         double totalSeconds = GetTotalSeconds();
-        double width = ActualWidth;
+        double width = Bounds.Width;
         if (totalSeconds <= 0 || width <= 0 || PixelsPerSecond <= 0)
         {
             return;
         }
 
-        bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
+        bool ctrl = (e.KeyModifiers & KeyModifiers.Control) != 0;
         if (ctrl)
         {
-            double steps = e.Delta / 120.0;
+            double steps = e.Delta.Y;
             double factor = Math.Pow(WheelZoomFactor, steps);
             double mouseX = e.GetPosition(this).X;
             double timeUnderMouse = Math.Clamp((mouseX / PixelsPerSecond) + ScrollOffsetSeconds, 0.0, totalSeconds);
@@ -1207,29 +1026,36 @@ public sealed class TimelineControl : FrameworkElement
         }
 
         double visibleDuration = width / PixelsPerSecond;
-        double scrollStep = 0.10 * visibleDuration * (-e.Delta / 120.0);
+        double scrollStep = 0.10 * visibleDuration * (-e.Delta.Y);
         double newOffset = ClampOffset(ScrollOffsetSeconds + scrollStep, PixelsPerSecond, width);
         if (Math.Abs(newOffset - ScrollOffsetSeconds) > 0.0001)
         {
             NotifyUserNavigated();
             SetViewportValues(PixelsPerSecond, newOffset, IsFitToWindow);
-            InvalidateBackground();
+            ScheduleRender();
             ViewportChanged?.Invoke(this, EventArgs.Empty);
         }
 
         e.Handled = true;
     }
 
-    protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
+    protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
-        base.OnMouseLeftButtonDown(e);
+        base.OnPointerPressed(e);
 
         if (GetTotalSeconds() <= 0 || PixelsPerSecond <= 0)
         {
             return;
         }
 
-        Point pos = e.GetPosition(this);
+        PointerPoint pointerPoint = e.GetCurrentPoint(this);
+        if (!pointerPoint.Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        Point pos = pointerPoint.Position;
+        _lastKeyModifiers = e.KeyModifiers;
 
         // 1. Priorite au hit-test des marqueurs
         int hitMarker = HitTestMarker(pos.X, pos.Y);
@@ -1245,10 +1071,9 @@ public sealed class TimelineControl : FrameworkElement
             _isHovering = true;
             _hoverX = pos.X;
 
-            CaptureMouse();
+            CapturePointer(e.Pointer);
             MarkerSelectionRequested?.Invoke(this, hitMarker);
-            RenderSegmentsLayer();
-            RenderHoverLayer();
+            InvalidateVisual();
             e.Handled = true;
             return;
         }
@@ -1274,18 +1099,17 @@ public sealed class TimelineControl : FrameworkElement
         _lastDragX = pos.X;
         _dragPositionSeconds = target.TotalSeconds;
 
-        CaptureMouse();
-        RenderPlayheadLayer();
-        RenderHoverLayer();
+        CapturePointer(e.Pointer);
+        InvalidateVisual();
         UpdateHoverPopup(pos, target);
 
         SeekRequested?.Invoke(this, target);
         e.Handled = true;
     }
 
-    protected override void OnMouseMove(MouseEventArgs e)
+    protected override void OnPointerMoved(PointerEventArgs e)
     {
-        base.OnMouseMove(e);
+        base.OnPointerMoved(e);
 
         double totalSeconds = GetTotalSeconds();
         if (totalSeconds <= 0 || PixelsPerSecond <= 0)
@@ -1295,6 +1119,7 @@ public sealed class TimelineControl : FrameworkElement
         }
 
         Point pos = e.GetPosition(this);
+        _lastKeyModifiers = e.KeyModifiers;
         _isHovering = true;
         _hoverX = pos.X;
 
@@ -1308,15 +1133,18 @@ public sealed class TimelineControl : FrameworkElement
 
             if (_hasMarkerDragMoved)
             {
-                TimeSpan previewTime = ComputeSnappedAndClampedMarkerTime(pos.X);
+                TimeSpan previewTime = ComputeSnappedAndClampedMarkerTime(pos.X, _lastKeyModifiers);
                 _dragMarkerSeconds = previewTime.TotalSeconds;
                 UpdateEdgeScrollTimer(pos.X);
-                RenderSegmentsLayer();
+                InvalidateVisual();
                 UpdateHoverPopup(pos, previewTime);
                 BoundaryDragPreview?.Invoke(this, (_dragMarkerIndex, previewTime));
             }
+            else
+            {
+                InvalidateVisual();
+            }
 
-            RenderHoverLayer();
             return;
         }
 
@@ -1327,7 +1155,6 @@ public sealed class TimelineControl : FrameworkElement
             _lastDragX = pos.X;
             _dragPositionSeconds = hoverTime.TotalSeconds;
             UpdateEdgeScrollTimer(pos.X);
-            RenderPlayheadLayer();
             SeekRequested?.Invoke(this, hoverTime);
         }
         else
@@ -1335,13 +1162,20 @@ public sealed class TimelineControl : FrameworkElement
             UpdateCursorForPoint(pos);
         }
 
-        RenderHoverLayer();
+        InvalidateVisual();
         UpdateHoverPopup(pos, hoverTime);
     }
 
-    protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)
+    protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
-        base.OnMouseLeftButtonUp(e);
+        base.OnPointerReleased(e);
+
+        if (e.InitialPressMouseButton != MouseButton.Left)
+        {
+            return;
+        }
+
+        _lastKeyModifiers = e.KeyModifiers;
 
         if (_isDraggingMarker)
         {
@@ -1350,11 +1184,11 @@ public sealed class TimelineControl : FrameworkElement
             bool moved = _hasMarkerDragMoved;
             int idx = _dragMarkerIndex;
             TimeSpan finalTime = moved
-                ? ComputeSnappedAndClampedMarkerTime(upPos.X)
+                ? ComputeSnappedAndClampedMarkerTime(upPos.X, _lastKeyModifiers)
                 : TimeSpan.FromSeconds(_dragMarkerOriginalSeconds);
 
             ResetMarkerDragState();
-            ReleaseMouseCapture();
+            ReleasePointerCapture();
 
             if (moved)
             {
@@ -1365,7 +1199,7 @@ public sealed class TimelineControl : FrameworkElement
                 SeekCompleted?.Invoke(this, finalTime);
             }
 
-            if (!IsMouseOver)
+            if (!IsPointerOver)
             {
                 _isHovering = false;
                 _hoverPopup.Hide();
@@ -1376,8 +1210,7 @@ public sealed class TimelineControl : FrameworkElement
                 UpdateHoverPopup(upPos, finalTime);
             }
 
-            RenderSegmentsLayer();
-            RenderHoverLayer();
+            InvalidateVisual();
             e.Handled = true;
             return;
         }
@@ -1393,11 +1226,11 @@ public sealed class TimelineControl : FrameworkElement
 
         _isDragging = false;
         _dragPositionSeconds = finalSeek.TotalSeconds;
-        ReleaseMouseCapture();
+        ReleasePointerCapture();
 
         SeekCompleted?.Invoke(this, finalSeek);
 
-        if (!IsMouseOver)
+        if (!IsPointerOver)
         {
             _isHovering = false;
             _hoverPopup.Hide();
@@ -1408,30 +1241,31 @@ public sealed class TimelineControl : FrameworkElement
             UpdateHoverPopup(pos, finalSeek);
         }
 
-        RenderPlayheadLayer();
-        RenderHoverLayer();
+        InvalidateVisual();
         e.Handled = true;
     }
 
-    protected override void OnMouseLeave(MouseEventArgs e)
+    protected override void OnPointerExited(PointerEventArgs e)
     {
-        base.OnMouseLeave(e);
+        base.OnPointerExited(e);
 
         if (!_isDragging && !_isDraggingMarker)
         {
             _isHovering = false;
             _hoverPopup.Hide();
-            if (Cursor != Cursors.Hand)
+            if (!Equals(Cursor, HandCursor))
             {
-                Cursor = Cursors.Hand;
+                Cursor = HandCursor;
             }
-            RenderHoverLayer();
+
+            InvalidateVisual();
         }
     }
 
-    protected override void OnLostMouseCapture(MouseEventArgs e)
+    protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
     {
-        base.OnLostMouseCapture(e);
+        base.OnPointerCaptureLost(e);
+        _capturedPointer = null;
 
         if (_isDraggingMarker)
         {
@@ -1439,14 +1273,13 @@ public sealed class TimelineControl : FrameworkElement
             int idx = _dragMarkerIndex;
             TimeSpan original = TimeSpan.FromSeconds(_dragMarkerOriginalSeconds);
             ResetMarkerDragState();
-            if (!IsMouseOver)
+            if (!IsPointerOver)
             {
                 _isHovering = false;
                 _hoverPopup.Hide();
             }
 
-            RenderSegmentsLayer();
-            RenderHoverLayer();
+            InvalidateVisual();
             BoundaryDragCompleted?.Invoke(this, (idx, original, true));
             return;
         }
@@ -1455,14 +1288,32 @@ public sealed class TimelineControl : FrameworkElement
         {
             _edgeScrollTimer.Stop();
             _isDragging = false;
-            if (!IsMouseOver)
+            if (!IsPointerOver)
             {
                 _isHovering = false;
                 _hoverPopup.Hide();
             }
 
-            RenderPlayheadLayer();
-            RenderHoverLayer();
+            InvalidateVisual();
+        }
+    }
+
+    private void CapturePointer(IPointer pointer)
+    {
+        _capturedPointer = pointer;
+        pointer.Capture(this);
+    }
+
+    private void ReleasePointerCapture()
+    {
+        if (_capturedPointer is not null)
+        {
+            if (Equals(_capturedPointer.Captured, this))
+            {
+                _capturedPointer.Capture(null);
+            }
+
+            _capturedPointer = null;
         }
     }
 
@@ -1495,16 +1346,16 @@ public sealed class TimelineControl : FrameworkElement
     private void UpdateCursorForPoint(Point pos)
     {
         Cursor targetCursor = _isDraggingMarker || HitTestMarker(pos.X, pos.Y) >= 0
-            ? Cursors.SizeWE
-            : Cursors.Hand;
+            ? ResizeHorizontalCursor
+            : HandCursor;
 
-        if (Cursor != targetCursor)
+        if (!Equals(Cursor, targetCursor))
         {
             Cursor = targetCursor;
         }
     }
 
-    private TimeSpan ComputeSnappedAndClampedMarkerTime(double mouseX)
+    private TimeSpan ComputeSnappedAndClampedMarkerTime(double mouseX, KeyModifiers modifiers)
     {
         if (Segments is not { Count: > 1 } segments || _dragMarkerIndex < 0 || _dragMarkerIndex >= segments.Count - 1)
         {
@@ -1512,7 +1363,7 @@ public sealed class TimelineControl : FrameworkElement
         }
 
         double rawSec = XToTime(mouseX).TotalSeconds;
-        bool altHeld = (Keyboard.Modifiers & ModifierKeys.Alt) == ModifierKeys.Alt;
+        bool altHeld = (modifiers & KeyModifiers.Alt) != 0;
         if (SnapToKeyframes && !altHeld && Keyframes is { Count: > 0 } kfs && PixelsPerSecond > 0)
         {
             double tolerance = Math.Min(SnapTolerancePx / PixelsPerSecond, MaxSnapToleranceSeconds);
@@ -1531,7 +1382,7 @@ public sealed class TimelineControl : FrameworkElement
 
     private void UpdateEdgeScrollTimer(double mouseX)
     {
-        double width = ActualWidth;
+        double width = Bounds.Width;
         bool nearEdge = width > EdgeScrollMarginPx * 2
             && (mouseX < EdgeScrollMarginPx || mouseX > width - EdgeScrollMarginPx);
 
@@ -1548,7 +1399,7 @@ public sealed class TimelineControl : FrameworkElement
     private void OnEdgeScrollTick(object? sender, EventArgs e)
     {
         if ((!_isDragging && !(_isDraggingMarker && _hasMarkerDragMoved))
-            || ActualWidth <= 0
+            || Bounds.Width <= 0
             || PixelsPerSecond <= 0
             || GetTotalSeconds() <= 0)
         {
@@ -1556,7 +1407,7 @@ public sealed class TimelineControl : FrameworkElement
             return;
         }
 
-        double width = ActualWidth;
+        double width = Bounds.Width;
         double deltaPx = 0.0;
         if (_lastDragX < EdgeScrollMarginPx)
         {
@@ -1578,15 +1429,14 @@ public sealed class TimelineControl : FrameworkElement
         {
             NotifyUserNavigated();
             SetViewportValues(PixelsPerSecond, newOffset, IsFitToWindow);
-            InvalidateBackground();
             ViewportChanged?.Invoke(this, EventArgs.Empty);
         }
 
         if (_isDraggingMarker)
         {
-            TimeSpan previewTime = ComputeSnappedAndClampedMarkerTime(_lastDragX);
+            TimeSpan previewTime = ComputeSnappedAndClampedMarkerTime(_lastDragX, _lastKeyModifiers);
             _dragMarkerSeconds = previewTime.TotalSeconds;
-            RenderSegmentsLayer();
+            InvalidateVisual();
             UpdateHoverPopup(new Point(_lastDragX, FilmstripTop), previewTime);
             BoundaryDragPreview?.Invoke(this, (_dragMarkerIndex, previewTime));
             return;
@@ -1594,7 +1444,7 @@ public sealed class TimelineControl : FrameworkElement
 
         TimeSpan target = XToTime(_lastDragX);
         _dragPositionSeconds = target.TotalSeconds;
-        RenderPlayheadLayer();
+        InvalidateVisual();
         UpdateHoverPopup(new Point(_lastDragX, FilmstripTop), target);
         SeekRequested?.Invoke(this, target);
     }
@@ -1613,7 +1463,7 @@ public sealed class TimelineControl : FrameworkElement
 
     private void UpdateHoverPopup(Point mousePosition, TimeSpan time)
     {
-        ImageSource? image = Thumbnails?.GetThumbnail(time);
+        IImage? image = Thumbnails?.GetThumbnail(time);
         _hoverPopup.Update(this, mousePosition, time, image, Duration);
     }
 
@@ -1667,7 +1517,7 @@ public sealed class TimelineControl : FrameworkElement
             : $"{totalMins:D2}:{secs:D2}";
     }
 
-    private FormattedText GetOrCreateLabelText(string text, double pixelsPerDip)
+    private FormattedText GetOrCreateLabelText(string text)
     {
         if (_labelCache.TryGetValue(text, out FormattedText? cached))
         {
@@ -1685,14 +1535,13 @@ public sealed class TimelineControl : FrameworkElement
             FlowDirection.LeftToRight,
             _labelTypeface,
             10.5,
-            _textSecondaryBrush,
-            pixelsPerDip);
+            _textSecondaryBrush);
 
         _labelCache[text] = ft;
         return ft;
     }
 
-    private FormattedText GetOrCreateSegmentLabelText(string name, double segmentWidth, bool enabled, double pixelsPerDip)
+    private FormattedText GetOrCreateSegmentLabelText(string name, double segmentWidth, bool enabled)
     {
         int widthBucket = Math.Max(40, ((int)segmentWidth / 16) * 16);
         var key = new SegmentLabelKey(name, widthBucket, enabled);
@@ -1713,8 +1562,7 @@ public sealed class TimelineControl : FrameworkElement
             FlowDirection.LeftToRight,
             _emptyTypeface,
             11.0,
-            enabled ? _textPrimaryBrush : _textMutedBrush,
-            pixelsPerDip)
+            enabled ? _textPrimaryBrush : _textMutedBrush)
         {
             MaxTextWidth = Math.Max(4.0, widthBucket - 12.0),
             MaxLineCount = 1,
@@ -1742,81 +1590,52 @@ public sealed class TimelineControl : FrameworkElement
         _textMutedBrush = ResolveBrush("TextMutedBrush", Color.FromRgb(0x66, 0x6E, 0x7D));
         _playheadBrush = ResolveBrush("AccentBrush", Color.FromRgb(0x3B, 0x82, 0xF6));
         _segmentEvenBrush = ResolveBrush("AccentSubtleBrush", Color.FromRgb(0x1E, 0x3A, 0x5F));
-
-        var oddBrush = new SolidColorBrush(Color.FromRgb(0x24, 0x46, 0x70));
-        oddBrush.Freeze();
-        _segmentOddBrush = oddBrush;
-
+        _segmentOddBrush = new ImmutableSolidColorBrush(Color.FromRgb(0x24, 0x46, 0x70));
         _segmentDisabledBrush = ResolveBrush("DisabledBackgroundBrush", Color.FromRgb(0x18, 0x1B, 0x20));
+        _disabledFilmstripScrimBrush = new ImmutableSolidColorBrush(Color.FromArgb(0x99, 0x09, 0x0A, 0x0C));
+        _markerBrush = new ImmutableSolidColorBrush(Color.FromRgb(0xF5, 0x9E, 0x0B));
+        _markerSelectedBrush = new ImmutableSolidColorBrush(Color.FromRgb(0xEF, 0x44, 0x44));
 
-        var scrimBrush = new SolidColorBrush(Color.FromArgb(0x99, 0x09, 0x0A, 0x0C));
-        scrimBrush.Freeze();
-        _disabledFilmstripScrimBrush = scrimBrush;
+        IBrush borderBrush = ResolveBrush("BorderBrush", Color.FromRgb(0x2E, 0x34, 0x40));
+        IBrush selectedBorderBrush = ResolveBrush("AccentHoverBrush", Color.FromRgb(0x60, 0xA5, 0xFA));
 
-        var markerBrush = new SolidColorBrush(Color.FromRgb(0xF5, 0x9E, 0x0B));
-        markerBrush.Freeze();
-        _markerBrush = markerBrush;
+        _borderPen = new ImmutablePen(borderBrush, 1.0);
+        _majorTickPen = new ImmutablePen(_textSecondaryBrush, 1.0);
+        _minorTickPen = new ImmutablePen(_textMutedBrush, 1.0);
+        _playheadPen = new ImmutablePen(_playheadBrush, 2.0);
+        _segmentBorderPen = new ImmutablePen(borderBrush, 1.0);
+        _segmentSelectedPen = new ImmutablePen(selectedBorderBrush, 1.5);
+        _markerPen = new ImmutablePen(_markerBrush, 2.0);
+        _markerSelectedPen = new ImmutablePen(_markerSelectedBrush, 2.5);
+        _markerHandleOutlinePen = new ImmutablePen(_backgroundBrush, 1.0);
 
-        var markerSelectedBrush = new SolidColorBrush(Color.FromRgb(0xEF, 0x44, 0x44));
-        markerSelectedBrush.Freeze();
-        _markerSelectedBrush = markerSelectedBrush;
-
-        Brush borderBrush = ResolveBrush("BorderBrush", Color.FromRgb(0x2E, 0x34, 0x40));
-        Brush selectedBorderBrush = ResolveBrush("AccentHoverBrush", Color.FromRgb(0x60, 0xA5, 0xFA));
-
-        _borderPen = CreateFrozenPen(borderBrush, 1.0);
-        _majorTickPen = CreateFrozenPen(_textSecondaryBrush, 1.0);
-        _minorTickPen = CreateFrozenPen(_textMutedBrush, 1.0);
-        _playheadPen = CreateFrozenPen(_playheadBrush, 2.0);
-        _segmentBorderPen = CreateFrozenPen(borderBrush, 1.0);
-        _segmentSelectedPen = CreateFrozenPen(selectedBorderBrush, 1.5);
-        _markerPen = CreateFrozenPen(_markerBrush, 2.0);
-        _markerSelectedPen = CreateFrozenPen(_markerSelectedBrush, 2.5);
-        _markerHandleOutlinePen = CreateFrozenPen(_backgroundBrush, 1.0);
-
-        var hoverBrush = new SolidColorBrush(Color.FromArgb(0x99, 0xED, 0xF0, 0xF5));
-        hoverBrush.Freeze();
-        _hoverPen = CreateFrozenPen(hoverBrush, 1.0);
+        IBrush hoverBrush = new ImmutableSolidColorBrush(Color.FromArgb(0x99, 0xED, 0xF0, 0xF5));
+        _hoverPen = new ImmutablePen(hoverBrush, 1.0);
 
         var diamond = new StreamGeometry();
         using (StreamGeometryContext ctx = diamond.Open())
         {
-            ctx.BeginFigure(new Point(0.0, -5.0), isFilled: true, isClosed: true);
-            ctx.LineTo(new Point(5.0, 0.0), isStroked: true, isSmoothJoin: false);
-            ctx.LineTo(new Point(0.0, 5.0), isStroked: true, isSmoothJoin: false);
-            ctx.LineTo(new Point(-5.0, 0.0), isStroked: true, isSmoothJoin: false);
+            ctx.BeginFigure(new Point(0.0, -5.0), true);
+            ctx.LineTo(new Point(5.0, 0.0));
+            ctx.LineTo(new Point(0.0, 5.0));
+            ctx.LineTo(new Point(-5.0, 0.0));
+            ctx.EndFigure(true);
         }
 
-        diamond.Freeze();
         _markerDiamondGeometry = diamond;
 
         _labelTypeface = new Typeface("Consolas");
         _emptyTypeface = new Typeface("Segoe UI");
     }
 
-    private static Brush ResolveBrush(string resourceKey, Color fallbackColor)
+    private IBrush ResolveBrush(string resourceKey, Color fallbackColor)
     {
-        if (Application.Current?.TryFindResource(resourceKey) is Brush found)
+        if (this.TryFindResource(resourceKey, ActualThemeVariant, out object? found)
+            && found is ISolidColorBrush solid)
         {
-            if (found.CanFreeze && !found.IsFrozen)
-            {
-                Brush clone = found.Clone();
-                clone.Freeze();
-                return clone;
-            }
-
-            return found;
+            return new ImmutableSolidColorBrush(solid.Color);
         }
 
-        var fallback = new SolidColorBrush(fallbackColor);
-        fallback.Freeze();
-        return fallback;
-    }
-
-    private static Pen CreateFrozenPen(Brush brush, double thickness)
-    {
-        var pen = new Pen(brush, thickness);
-        pen.Freeze();
-        return pen;
+        return new ImmutableSolidColorBrush(fallbackColor);
     }
 }

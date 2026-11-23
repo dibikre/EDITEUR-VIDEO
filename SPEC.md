@@ -23,8 +23,8 @@ L'application doit rester fluide (aucun gel de l'interface), même sur des vidé
 | Rôle | Choix |
 |---|---|
 | Runtime | .NET 10, C# (Nullable activé, ImplicitUsings activé) |
-| UI | WPF, thème sombre, interface en **français** |
-| Lecteur | LibVLCSharp.WPF 3.10.2 + VideoLAN.LibVLC.Windows 3.0.24 |
+| UI | Avalonia UI 11.3.22 (`FluentTheme`), thème sombre, interface en **français** |
+| Lecteur | LibVLCSharp.Avalonia 3.10.2 + VideoLAN.LibVLC.Windows 3.0.24 |
 | Traitement vidéo | `ffmpeg.exe` et `ffprobe.exe` en processus externes, pilotés par CliWrap 3.10.5 |
 | Architecture | MVVM avec CommunityToolkit.Mvvm 8.4.2 |
 | Injection de dépendances | Microsoft.Extensions.DependencyInjection |
@@ -42,8 +42,8 @@ Chemin des binaires FFmpeg à l'exécution : `Path.Combine(AppContext.BaseDirect
 1. **Aucune opération longue sur le thread UI.** Tout appel à FFmpeg/FFprobe, tout accès disque lourd, tout calcul important : `async`/`await` avec `CancellationToken`.
 2. **FFmpeg tourne toujours dans un processus séparé** (CliWrap). Si FFmpeg plante, l'application ne doit jamais planter.
 3. **Aucun décodage de vidéo au survol.** Les vignettes sont pré-générées (sprite sheets) et chargées en mémoire.
-4. **Aucun contrôle par-dessus la vidéo** (problème d'airspace avec LibVLC/HwndHost). Tous les contrôles sont placés **sous** la zone vidéo. Seule exception autorisée : les `Popup` WPF.
-5. **Un seul `LibVLC` et un seul `MediaPlayer`** pour toute l'application, créés au démarrage (`Core.Initialize()` dans `App.OnStartup`), libérés proprement à la fermeture.
+4. **Aucun contrôle par-dessus la vidéo** (problème d'airspace avec le handle natif LibVLC dans `VideoView`). Tous les contrôles sont placés **sous** la zone vidéo. Seule exception autorisée : les `Popup` natifs (`ShouldUseOverlayLayer = false`).
+5. **Un seul `LibVLC` et un seul `MediaPlayer`** pour toute l'application, créés au démarrage (`Core.Initialize()` dans `App.OnFrameworkInitializationCompleted`), libérés proprement à la fermeture (`desktop.Exit`).
 6. **Jamais de `.Result`, `.Wait()` ni `Thread.Sleep`** dans le code applicatif.
 7. **Gestion d'erreurs explicite** pour chaque appel FFmpeg : code de sortie non nul, fichier introuvable, annulation, disque plein, fichier de sortie déjà existant. Message clair en français pour l'utilisateur, détails techniques dans le journal.
 8. **Jamais plus de 2 exports FFmpeg simultanés.**
@@ -81,7 +81,7 @@ Disposition suggérée : `Grid` à lignes `*` (lecteur), `Auto` (contrôles), `A
 ## 5. Fonctionnalités détaillées
 
 ### 5.1 Ouverture
-- Bouton « Ouvrir » (`OpenFileDialog`) et glisser-déposer d'un fichier sur la fenêtre.
+- Bouton « Ouvrir » (`StorageProvider.OpenFilePickerAsync`) et glisser-déposer d'un fichier sur la fenêtre.
 - Au chargement : `ffprobe` (durée, résolution, fps, codecs, présence d'audio), lancement de la lecture en pause sur la première image, déclenchement en arrière-plan de la génération des vignettes et de la liste des keyframes.
 - Le titre de la fenêtre affiche le nom du fichier.
 
@@ -94,10 +94,10 @@ Disposition suggérée : `Grid` à lignes `*` (lecteur), `Auto` (contrôles), `A
 
 ### 5.3 Vignettes au survol (fonctionnalité clé)
 Sur la **barre de lecture** et sur la **timeline** :
-- Au survol, afficher un `Popup` au-dessus du curseur, contenant la vignette correspondante et le timecode.
-- Le popup suit la souris, reste dans les limites de l'écran, et disparaît à la sortie.
+- Au survol, afficher un `Popup` natif (`ShouldUseOverlayLayer = false`, `IsLightDismissEnabled = false`) au-dessus du curseur, contenant la vignette correspondante et le timecode.
+- Le popup suit la souris, reste dans les limites de l'écran, et disparaît à la sortie sans capturer les clics.
 - Calcul : `t = (x / largeur) * durée` ; `index = floor(t / intervalle)` ; feuille = `index / (cols*lignes)` ; cellule = `index % (cols*lignes)`.
-- Affichage via `CroppedBitmap` sur la feuille déjà chargée en mémoire (bitmaps `Freeze()`). Aucun accès disque ni décodage au survol.
+- Affichage via `CroppedBitmap` sur la feuille `Bitmap` déjà chargée en mémoire. Aucun accès disque ni décodage au survol.
 - Si la vignette n'est pas encore générée : afficher uniquement le timecode.
 
 ### 5.4 Génération des sprite sheets
@@ -116,15 +116,15 @@ Sur la **barre de lecture** et sur la **timeline** :
 - **Cache disque** : `%LOCALAPPDATA%\VideoSplitter\cache\<clé>\` où la clé est un hash (SHA-1) de `chemin complet + taille + date de dernière modification` (ne **jamais** hasher le contenu entier du fichier). Si le cache existe et que `meta.json` est valide, ne rien régénérer. Prévoir un nettoyage du cache (suppression des dossiers non utilisés depuis plus de 30 jours, au démarrage, en arrière-plan).
 
 ### 5.5 Timeline d'édition
-Contrôle personnalisé `TimelineControl` (un `FrameworkElement` avec `OnRender`, pas une pile de dizaines de `Border`) :
-- **Filmstrip** : vignettes issues des sprite sheets, dessinées uniquement sur la **portion visible** (virtualisation).
-- **Playhead** : ligne verticale suivant la lecture, déplaçable par clic/glisser.
+Contrôle personnalisé `TimelineControl` (un `Control` Avalonia avec `Render(DrawingContext)`, pas une pile de dizaines de `Border`) :
+- **Filmstrip** : vignettes issues des sprite sheets, dessinées uniquement sur la **portion visible** (virtualisation) via `DrawingContext.DrawImage`.
+- **Playhead** : ligne verticale suivant la lecture (extrapolation fluide via `TopLevel.RequestAnimationFrame`), déplaçable par clic/glisser.
 - **Marqueurs de coupe** : lignes verticales sur les points de split, déplaçables à la souris.
 - **Segments** : zones entre deux marqueurs, couleurs alternées, segment sélectionné mis en évidence, segment désactivé grisé (exclu de l'export).
 - **Zoom** : `Ctrl + molette` (centré sur le curseur), boutons +/-, bouton « Ajuster à la fenêtre ». **Défilement horizontal** : molette simple ou barre de défilement.
 - **Règle de temps** (graduations adaptées au niveau de zoom).
 - Option « Aimanter aux keyframes » : le placement des marqueurs se cale sur la keyframe la plus proche (liste obtenue via `ffprobe`, voir 7).
-- Rendu mis en cache (`DrawingVisual` ou bitmap), invalidation uniquement quand nécessaire. Le playhead est redessiné sans redessiner tout le filmstrip.
+- Rendu optimisé (ressources et `FormattedText` mis en cache, invalidation groupée à priorité `Render`).
 
 ### 5.6 Édition (modèle de données)
 `Segment { Guid Id; TimeSpan Start; TimeSpan End; bool Enabled; string Name; }`
@@ -139,7 +139,7 @@ Opérations :
 - Invariants : segments contigus, triés, sans chevauchement, durée minimale 0,1 s, le premier commence à 0 et le dernier finit à la durée totale.
 
 ### 5.7 Panneau du bas
-- **Liste des segments** (`ListView`) : numéro, nom éditable, début, fin, durée, case « inclus », indicateur « début sur keyframe ». Cliquer un segment le sélectionne et déplace le playhead à son début.
+- **Liste des segments** (`ListBox` en grille) : numéro, nom éditable, début, fin, durée, case « inclus », indicateur « début sur keyframe ». Cliquer un segment le sélectionne et déplace le playhead à son début.
 - **Options d'export** : dossier de sortie, modèle de nom (`{nom}_part{NN}`, extension identique à la source par défaut), mode Rapide/Précis, qualité (CRF 18 par défaut) en mode précis, encodeur (Auto / CPU / NVENC / QSV / AMF).
 - **Progression** : barre par tâche, barre globale, bouton Annuler, bouton « Ouvrir le dossier » en fin d'export.
 
@@ -250,22 +250,23 @@ VideoSplitter/
   scripts/fetch-ffmpeg.ps1
   src/VideoSplitter/
     VideoSplitter.csproj
-    App.xaml / App.xaml.cs            (composition root DI, Core.Initialize, thème)
+    Program.cs                        (point d'entrée Avalonia Desktop)
+    App.axaml / App.axaml.cs          (composition root DI, Core.Initialize, thème)
     Assets/ffmpeg/                    (binaires, non versionnés)
     Models/        MediaInfo, Segment, SpriteSet, ExportModels
     Editing/       SegmentEditor, KeyframeSnapper, EditHistory
     Export/        FfmpegArgsBuilder, ExportPlanner, CutAccuracy
-    Services/      FfmpegService, ThumbnailService, ExportService, ExportQueue, CacheService
-    ViewModels/    MainViewModel, PlayerViewModel, TimelineViewModel, EditViewModel, ExportViewModel
-    Controls/      TimelineControl, TimelineView, SeekBar, ThumbnailHoverPopup
-    Converters/    TimeSpanToStringConverter, EnumBooleanConverter
-    Views/         MainWindow.xaml(.cs), ExportConflictDialog.xaml(.cs), FastCutWarningDialog.xaml(.cs)
-    Themes/        Dark.xaml
+    Services/      FfmpegService, ThumbnailService, ThumbnailStore, ExportService, ExportQueue, CacheService, FileLogger
+    ViewModels/    MainViewModel, PlayerViewModel, TimelineViewModel, EditViewModel, ExportViewModel, ExportItemViewModel, SegmentRowViewModel
+    Controls/      TimelineControl, TimelineView.axaml(.cs), SeekBar.axaml(.cs), ThumbnailHoverPopup
+    Converters/    TimeSpanToStringConverter, EnumBooleanConverter, StatusVisualConverters
+    Views/         MainWindow.axaml(.cs), ExportConflictDialog.axaml(.cs), FastCutWarningDialog.axaml(.cs), MessageDialog.axaml(.cs)
+    Themes/        Dark.axaml
 ```
 
-Namespace racine : `VideoSplitter`. Les `x:Class` XAML doivent correspondre exactement aux namespaces C#.
+Namespace racine : `VideoSplitter`. Les `x:Class` AXAML doivent correspondre exactement aux namespaces C#.
 
-Dans `App.xaml`, **supprimer `StartupUri`** : la fenêtre principale est créée dans `App.OnStartup` via le conteneur DI.
+La fenêtre principale est créée et assignée à `desktop.MainWindow` dans `App.OnFrameworkInitializationCompleted` via le conteneur DI.
 
 ---
 

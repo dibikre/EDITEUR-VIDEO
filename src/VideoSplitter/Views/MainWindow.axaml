@@ -1,0 +1,569 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vlc="clr-namespace:LibVLCSharp.Avalonia;assembly=LibVLCSharp.Avalonia"
+        xmlns:vm="clr-namespace:VideoSplitter.ViewModels"
+        xmlns:controls="clr-namespace:VideoSplitter.Controls"
+        xmlns:conv="clr-namespace:VideoSplitter.Converters"
+        x:Class="VideoSplitter.Views.MainWindow"
+        x:Name="RootWindow"
+        Title="{Binding Title}"
+        Width="1280"
+        Height="820"
+        MinWidth="1000"
+        MinHeight="650"
+        DragDrop.AllowDrop="True"
+        WindowStartupLocation="CenterScreen">
+
+    <Window.Resources>
+        <conv:TimeSpanToStringConverter x:Key="TimeSpanConverter" />
+        <conv:EnumBooleanConverter x:Key="EnumBoolConverter" />
+        <conv:BoolToTextConverter x:Key="BoolToTextConverter" />
+        <conv:BoolToKeyFrameBrushConverter x:Key="BoolToKeyFrameBrushConverter" />
+        <conv:ExportStatusToGeometryConverter x:Key="ExportStatusGeometryConverter" />
+        <conv:ExportStatusToStrokeConverter x:Key="ExportStatusStrokeConverter" />
+        <conv:ExportStatusToFillConverter x:Key="ExportStatusFillConverter" />
+        <conv:ExportStatusToTextBrushConverter x:Key="ExportStatusTextBrushConverter" />
+    </Window.Resources>
+
+    <Grid RowDefinitions="Auto,*,Auto,Auto,Auto">
+        <!-- 1. Barre du haut -->
+        <Border Grid.Row="0"
+                Background="{StaticResource SurfaceBrush}"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="12,8">
+            <DockPanel LastChildFill="False">
+                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Content="Ouvrir"
+                            Command="{Binding Player.OuvrirCommand}"
+                            Focusable="False"
+                            Margin="0,0,8,0" />
+                    <Button Content="Exporter"
+                            Classes="primary"
+                            Command="{Binding Export.ExportCommand}"
+                            Focusable="False"
+                            ToolTip.Tip="Exporter les segments inclus"
+                            Margin="0,0,16,0" />
+
+                    <Border Width="1"
+                            Height="20"
+                            Background="{StaticResource BorderBrush}"
+                            Margin="0,0,16,0" />
+
+                    <TextBlock Text="Mode :"
+                               Classes="muted"
+                               Margin="0,0,10,0" />
+                    <RadioButton Content="Rapide"
+                                 GroupName="TopExportMode"
+                                 IsChecked="{Binding Export.Mode, Converter={StaticResource EnumBoolConverter}, ConverterParameter=Fast, Mode=TwoWay}"
+                                 ToolTip.Tip="Rapide : sans perte, quasi instantané, la coupe peut être décalée jusqu'au keyframe précédent.&#x0a;Précis : ré-encodage H.264/AAC, coupe exacte à l'image, plus lent."
+                                 Focusable="False"
+                                 Margin="0,0,12,0" />
+                    <RadioButton Content="Précis"
+                                 GroupName="TopExportMode"
+                                 IsChecked="{Binding Export.Mode, Converter={StaticResource EnumBoolConverter}, ConverterParameter=Precise, Mode=TwoWay}"
+                                 ToolTip.Tip="Rapide : sans perte, quasi instantané, la coupe peut être décalée jusqu'au keyframe précédent.&#x0a;Précis : ré-encodage H.264/AAC, coupe exacte à l'image, plus lent."
+                                 Focusable="False" />
+                </StackPanel>
+
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Player.ThumbnailStatus}"
+                               Classes="muted"
+                               Margin="0,0,14,0" />
+                    <TextBlock Text="{Binding Player.MediaSummary}"
+                               Classes="muted" />
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- 2. Zone lecteur (aucun controle superpose a VideoView) -->
+        <Border x:Name="VideoHostBorder"
+                Grid.Row="1"
+                Background="{StaticResource VideoBackgroundBrush}"
+                BorderBrush="{StaticResource BorderSubtleBrush}"
+                BorderThickness="0,0,0,1"
+                DragDrop.AllowDrop="True">
+            <Panel>
+                <TextBlock Text="Déposez une vidéo ici ou cliquez sur Ouvrir"
+                           Classes="muted"
+                           FontSize="14"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           IsHitTestVisible="False"
+                           IsVisible="{Binding !Player.IsMediaLoaded}" />
+                <vlc:VideoView x:Name="LecteurVideoView"
+                               HorizontalAlignment="Stretch"
+                               VerticalAlignment="Stretch"
+                               IsVisible="{Binding Player.IsMediaLoaded}" />
+            </Panel>
+        </Border>
+
+        <!-- 3. Controles de lecture -->
+        <Border Grid.Row="2"
+                Background="{StaticResource SurfaceBrush}"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="12,8">
+            <Grid RowDefinitions="Auto,Auto">
+                <DockPanel Grid.Row="0" Margin="0,0,0,8">
+                    <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Content="&lt; Image"
+                                Command="{Binding Player.StepBackwardCommand}"
+                                Focusable="False"
+                                ToolTip.Tip="Image précédente (Flèche gauche)"
+                                Margin="0,0,6,0" />
+                        <Button Content="{Binding Player.IsPlaying, Converter={StaticResource BoolToTextConverter}, ConverterParameter=Pause|Lecture}"
+                                Command="{Binding Player.PlayPauseCommand}"
+                                Focusable="False"
+                                MinWidth="92"
+                                ToolTip.Tip="Lecture / Pause (Espace)"
+                                Margin="0,0,6,0" />
+                        <Button Content="Image &gt;"
+                                Command="{Binding Player.StepForwardCommand}"
+                                Focusable="False"
+                                ToolTip.Tip="Image suivante (Flèche droite)"
+                                Margin="0,0,16,0" />
+
+                        <TextBlock FontFamily="Consolas"
+                                   FontSize="13"
+                                   Foreground="{StaticResource TextPrimaryBrush}">
+                            <TextBlock.Text>
+                                <MultiBinding StringFormat="{}{0} / {1}">
+                                    <Binding Path="Player.Position" Converter="{StaticResource TimeSpanConverter}" ConverterParameter="ms" />
+                                    <Binding Path="Player.Duration" Converter="{StaticResource TimeSpanConverter}" />
+                                </MultiBinding>
+                            </TextBlock.Text>
+                        </TextBlock>
+                    </StackPanel>
+
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <Button Content="{Binding Player.IsMuted, Converter={StaticResource BoolToTextConverter}, ConverterParameter=Muet|Son}"
+                                Command="{Binding Player.ToggleMuteCommand}"
+                                Focusable="False"
+                                MinWidth="58"
+                                Margin="0,0,8,0" />
+                        <Slider Width="95"
+                                Minimum="0"
+                                Maximum="100"
+                                Value="{Binding Player.Volume, Mode=TwoWay}"
+                                Focusable="False"
+                                IsEnabled="{Binding Player.IsMediaLoaded}"
+                                Margin="0,0,16,0" />
+
+                        <TextBlock Text="Vitesse :" Classes="muted" Margin="0,0,6,0" />
+                        <ComboBox Width="78"
+                                  ItemsSource="{Binding Player.SpeedOptions}"
+                                  SelectedItem="{Binding Player.Speed, Mode=TwoWay}"
+                                  IsEnabled="{Binding Player.IsMediaLoaded}"
+                                  Focusable="False">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding StringFormat={}{0:0.##}x}" />
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+                    </StackPanel>
+                </DockPanel>
+
+                <controls:SeekBar Grid.Row="1"
+                                  Duration="{Binding Player.Duration}"
+                                  Position="{Binding Player.Position}"
+                                  Thumbnails="{Binding Player.Thumbnails}"
+                                  IsEnabled="{Binding Player.IsMediaLoaded}"
+                                  SeekRequested="OnSeekBarSeekRequested"
+                                  SeekCompleted="OnSeekBarSeekCompleted" />
+            </Grid>
+        </Border>
+
+        <!-- 4. Zone timeline -->
+        <Border Grid.Row="3"
+                Background="{StaticResource WindowBackgroundBrush}"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="12,8">
+            <controls:TimelineView x:Name="MainTimelineView"
+                                   Duration="{Binding Player.Duration}"
+                                   Position="{Binding Player.Position}"
+                                   IsPlaying="{Binding Player.IsPlaying}"
+                                   PlaybackSpeed="{Binding Player.Speed}"
+                                   Thumbnails="{Binding Player.Thumbnails}"
+                                   Timeline="{Binding Timeline}"
+                                   Edit="{Binding Edit}"
+                                   SeekRequested="OnSeekBarSeekRequested"
+                                   SeekCompleted="OnSeekBarSeekCompleted"
+                                   SegmentSelectionRequested="OnTimelineSegmentSelectionRequested"
+                                   MarkerSelectionRequested="OnTimelineMarkerSelectionRequested"
+                                   BoundaryDragPreview="OnTimelineBoundaryDragPreview"
+                                   BoundaryDragCompleted="OnTimelineBoundaryDragCompleted" />
+        </Border>
+
+        <!-- 5. Panneau du bas -->
+        <Border Grid.Row="4"
+                Height="215"
+                Background="{StaticResource SurfaceBrush}"
+                Padding="12,10">
+            <Grid ColumnDefinitions="1.45*,10,1.15*,10,1.3*">
+                <!-- Liste des segments -->
+                <Grid Grid.Column="0" RowDefinitions="Auto,Auto,*">
+                    <DockPanel Grid.Row="0" Margin="0,0,0,6">
+                        <TextBlock DockPanel.Dock="Left"
+                                   Text="LISTE DES SEGMENTS"
+                                   Classes="section-title"
+                                   Margin="0" />
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+                            <TextBlock Text="{Binding Edit.EditStatus}"
+                                       Foreground="{StaticResource WarningBrush}"
+                                       FontSize="12"
+                                       Margin="0,0,12,0" />
+                            <TextBlock Text="{Binding Edit.SummaryText}"
+                                       Classes="muted" />
+                        </StackPanel>
+                    </DockPanel>
+
+                    <!-- En-tete du tableau des segments -->
+                    <Border Grid.Row="1"
+                            Background="{StaticResource SurfaceElevatedBrush}"
+                            BorderBrush="{StaticResource BorderBrush}"
+                            BorderThickness="1,1,1,0"
+                            CornerRadius="3,3,0,0"
+                            Padding="6,4">
+                        <Grid ColumnDefinitions="34,*,88,88,82,48,32">
+                            <TextBlock Grid.Column="0" Text="#" Classes="muted" FontWeight="SemiBold" />
+                            <TextBlock Grid.Column="1" Text="Nom" Classes="muted" FontWeight="SemiBold" />
+                            <TextBlock Grid.Column="2" Text="Début" Classes="muted" FontWeight="SemiBold" />
+                            <TextBlock Grid.Column="3" Text="Fin" Classes="muted" FontWeight="SemiBold" />
+                            <TextBlock Grid.Column="4" Text="Durée" Classes="muted" FontWeight="SemiBold" />
+                            <TextBlock Grid.Column="5" Text="Inclus" Classes="muted" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                            <TextBlock Grid.Column="6" Text="KF" Classes="muted" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                        </Grid>
+                    </Border>
+
+                    <ListBox x:Name="SegmentsListBox"
+                             Grid.Row="2"
+                             CornerRadius="0,0,3,3"
+                             ItemsSource="{Binding Edit.SegmentRows}"
+                             SelectedItem="{Binding Edit.SelectedSegmentRow, Mode=TwoWay}"
+                             SelectionMode="Single"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.Styles>
+                            <Style Selector="ListBoxItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Padding" Value="6,3" />
+                            </Style>
+                        </ListBox.Styles>
+                        <ListBox.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="Activer / Désactiver (E)"
+                                          Command="{Binding #RootWindow.DataContext.Edit.ToggleEnabledCommand}" />
+                                <Separator />
+                                <MenuItem Header="Fusionner avec le précédent"
+                                          Command="{Binding #RootWindow.DataContext.Edit.MergeWithPreviousCommand}" />
+                                <MenuItem Header="Fusionner avec le suivant"
+                                          Command="{Binding #RootWindow.DataContext.Edit.MergeWithNextCommand}" />
+                            </ContextMenu>
+                        </ListBox.ContextMenu>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate DataType="vm:SegmentRowViewModel">
+                                <Grid ColumnDefinitions="34,*,88,88,82,48,32">
+                                    <TextBlock Grid.Column="0"
+                                               Text="{Binding Index}"
+                                               FontSize="12" />
+                                    <TextBox Grid.Column="1"
+                                             Classes="inline-edit"
+                                             Margin="0,0,4,0"
+                                             Text="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                             KeyDown="OnSegmentNameKeyDown" />
+                                    <TextBlock Grid.Column="2"
+                                               FontFamily="Consolas"
+                                               FontSize="12"
+                                               Text="{Binding Start, Converter={StaticResource TimeSpanConverter}, ConverterParameter=ms}" />
+                                    <TextBlock Grid.Column="3"
+                                               FontFamily="Consolas"
+                                               FontSize="12"
+                                               Text="{Binding End, Converter={StaticResource TimeSpanConverter}, ConverterParameter=ms}" />
+                                    <TextBlock Grid.Column="4"
+                                               FontFamily="Consolas"
+                                               FontSize="12"
+                                               Text="{Binding Duration, Converter={StaticResource TimeSpanConverter}, ConverterParameter=ms}" />
+                                    <CheckBox Grid.Column="5"
+                                              IsChecked="{Binding IsEnabled, Mode=TwoWay}"
+                                              HorizontalAlignment="Center"
+                                              Focusable="False" />
+                                    <TextBlock Grid.Column="6"
+                                               Text="{Binding KeyframeBadge}"
+                                               ToolTip.Tip="{Binding KeyframeTooltip}"
+                                               Foreground="{Binding IsOnKeyframe, Converter={StaticResource BoolToKeyFrameBrushConverter}}"
+                                               HorizontalAlignment="Center"
+                                               FontWeight="Bold" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+
+                <!-- Options d'export -->
+                <Border Grid.Column="2"
+                        Background="{StaticResource WindowBackgroundBrush}"
+                        BorderBrush="{StaticResource BorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="4"
+                        Padding="10">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto"
+                              ColumnDefinitions="72,*">
+                            <TextBlock Grid.Row="0" Grid.ColumnSpan="2"
+                                       Text="OPTIONS D'EXPORT"
+                                       Classes="section-title" />
+
+                            <!-- Mode -->
+                            <TextBlock Grid.Row="1" Grid.Column="0"
+                                       Text="Mode :"
+                                       Classes="muted"
+                                       Margin="0,0,0,6" />
+                            <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Margin="0,0,0,6">
+                                <RadioButton Content="Rapide"
+                                             GroupName="BottomExportMode"
+                                             IsChecked="{Binding Export.Mode, Converter={StaticResource EnumBoolConverter}, ConverterParameter=Fast, Mode=TwoWay}"
+                                             ToolTip.Tip="Rapide : sans perte, quasi instantané, la coupe peut être décalée jusqu'au keyframe précédent.&#x0a;Précis : ré-encodage H.264/AAC, coupe exacte à l'image, plus lent."
+                                             Focusable="False"
+                                             Margin="0,0,12,0" />
+                                <RadioButton Content="Précis"
+                                             GroupName="BottomExportMode"
+                                             IsChecked="{Binding Export.Mode, Converter={StaticResource EnumBoolConverter}, ConverterParameter=Precise, Mode=TwoWay}"
+                                             ToolTip.Tip="Rapide : sans perte, quasi instantané, la coupe peut être décalée jusqu'au keyframe précédent.&#x0a;Précis : ré-encodage H.264/AAC, coupe exacte à l'image, plus lent."
+                                             Focusable="False" />
+                            </StackPanel>
+
+                            <!-- Qualite CRF -->
+                            <TextBlock Grid.Row="2" Grid.Column="0"
+                                       Text="Qualité :"
+                                       Classes="muted"
+                                       IsEnabled="{Binding Export.IsPreciseMode}"
+                                       Margin="0,0,0,6" />
+                            <Grid Grid.Row="2" Grid.Column="1"
+                                  ColumnDefinitions="*,Auto"
+                                  IsEnabled="{Binding Export.IsPreciseMode}"
+                                  Margin="0,0,0,6">
+                                <Slider Grid.Column="0"
+                                        Minimum="14"
+                                        Maximum="28"
+                                        IsSnapToTickEnabled="True"
+                                        TickFrequency="1"
+                                        Value="{Binding Export.Crf, Mode=TwoWay}"
+                                        Focusable="False"
+                                        ToolTip.Tip="Qualité CRF en mode Précis (14 = haute qualité, 28 = fichier plus léger)" />
+                                <TextBlock Grid.Column="1"
+                                           FontFamily="Consolas"
+                                           FontSize="12"
+                                           Foreground="{StaticResource TextSecondaryBrush}"
+                                           Margin="8,0,0,0"
+                                           Text="{Binding Export.Crf, StringFormat=CRF {0}}" />
+                            </Grid>
+
+                            <!-- Encodeur -->
+                            <TextBlock Grid.Row="3" Grid.Column="0"
+                                       Text="Encodeur :"
+                                       Classes="muted"
+                                       IsEnabled="{Binding Export.IsPreciseMode}"
+                                       Margin="0,0,0,6" />
+                            <Grid Grid.Row="3" Grid.Column="1"
+                                  ColumnDefinitions="*,Auto"
+                                  Margin="0,0,0,6">
+                                <ComboBox Grid.Column="0"
+                                          ItemsSource="{Binding Export.EncoderOptions}"
+                                          SelectedValueBinding="{Binding Kind}"
+                                          SelectedValue="{Binding Export.SelectedEncoder, Mode=TwoWay}"
+                                          DisplayMemberBinding="{Binding Label}"
+                                          IsEnabled="{Binding Export.IsPreciseMode}"
+                                          Focusable="False">
+                                    <ComboBox.Styles>
+                                        <Style Selector="ComboBoxItem">
+                                            <Setter Property="IsEnabled" Value="{Binding IsEnabled}" />
+                                        </Style>
+                                    </ComboBox.Styles>
+                                </ComboBox>
+                                <TextBlock Grid.Column="1"
+                                           Text="{Binding Export.EncoderStatus}"
+                                           Classes="muted"
+                                           FontSize="11"
+                                           Margin="8,0,0,0" />
+                            </Grid>
+
+                            <!-- Dossier de sortie -->
+                            <TextBlock Grid.Row="4" Grid.Column="0"
+                                       Text="Dossier :"
+                                       Classes="muted"
+                                       Margin="0,0,0,6" />
+                            <Grid Grid.Row="4" Grid.Column="1"
+                                  ColumnDefinitions="*,Auto,Auto"
+                                  Margin="0,0,0,6">
+                                <TextBox Grid.Column="0"
+                                         Text="{Binding Export.OutputFolder, Mode=TwoWay}"
+                                         ToolTip.Tip="{Binding Export.OutputFolder}"
+                                         Margin="0,0,4,0" />
+                                <Button Grid.Column="1"
+                                        Content="Parcourir…"
+                                        Command="{Binding Export.BrowseFolderCommand}"
+                                        Padding="7,3"
+                                        MinHeight="24"
+                                        Focusable="False"
+                                        Margin="0,0,4,0" />
+                                <Button Grid.Column="2"
+                                        Content="Ouvrir"
+                                        Command="{Binding Export.OpenOutputFolderCommand}"
+                                        Padding="7,3"
+                                        MinHeight="24"
+                                        Focusable="False" />
+                            </Grid>
+
+                            <!-- Modele de nom -->
+                            <TextBlock Grid.Row="5" Grid.Column="0"
+                                       Text="Modèle :"
+                                       Classes="muted"
+                                       Margin="0,0,0,4" />
+                            <TextBox Grid.Row="5" Grid.Column="1"
+                                     Text="{Binding Export.FileNamePattern, Mode=TwoWay}"
+                                     ToolTip.Tip="Jetons : {nom} (fichier source), {NN} (numéro), {debut} (hh-mm-ss), {segment} (nom du segment)"
+                                     Margin="0,0,0,4" />
+
+                            <TextBlock Grid.Row="6" Grid.Column="1"
+                                       Text="{Binding Export.PreviewFileName}"
+                                       Classes="muted"
+                                       FontSize="11"
+                                       TextTrimming="CharacterEllipsis"
+                                       ToolTip.Tip="{Binding Export.PreviewFileName}" />
+                        </Grid>
+                    </ScrollViewer>
+                </Border>
+
+                <!-- Progression -->
+                <Border Grid.Column="4"
+                        Background="{StaticResource WindowBackgroundBrush}"
+                        BorderBrush="{StaticResource BorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="4"
+                        Padding="10">
+                    <Grid RowDefinitions="Auto,Auto,*,Auto">
+                        <DockPanel Grid.Row="0" Margin="0,0,0,6">
+                            <TextBlock DockPanel.Dock="Left"
+                                       Text="PROGRESSION"
+                                       Classes="section-title"
+                                       Margin="0" />
+                            <Panel DockPanel.Dock="Right">
+                                <Button Content="Exporter"
+                                        Classes="primary"
+                                        Command="{Binding Export.ExportCommand}"
+                                        IsVisible="{Binding !Export.IsExporting}"
+                                        Focusable="False"
+                                        MinHeight="26"
+                                        Padding="10,3" />
+                                <Button Content="Annuler l'export"
+                                        Classes="danger"
+                                        Command="{Binding Export.CancelCommand}"
+                                        IsVisible="{Binding Export.IsExporting}"
+                                        Focusable="False"
+                                        MinHeight="26"
+                                        Padding="10,3" />
+                            </Panel>
+                        </DockPanel>
+
+                        <Grid Grid.Row="1"
+                              ColumnDefinitions="*,Auto,Auto"
+                              Margin="0,0,0,6">
+                            <ProgressBar Grid.Column="0"
+                                         Minimum="0"
+                                         Maximum="1"
+                                         Value="{Binding Export.GlobalProgress, Mode=OneWay}"
+                                         Margin="0,0,8,0" />
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding Export.GlobalProgressPercentText}"
+                                       FontFamily="Consolas"
+                                       FontSize="12"
+                                       Foreground="{StaticResource TextSecondaryBrush}" />
+                            <TextBlock Grid.Column="2"
+                                       Text="{Binding Export.EstimatedRemaining}"
+                                       FontFamily="Consolas"
+                                       FontSize="11"
+                                       Foreground="{StaticResource TextMutedBrush}"
+                                       Margin="8,0,0,0" />
+                        </Grid>
+
+                        <ListBox x:Name="ExportItemsListBox"
+                                 Grid.Row="2"
+                                 ItemsSource="{Binding Export.Items}"
+                                 SelectionMode="Single"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 Margin="0,0,0,6">
+                            <ListBox.Styles>
+                                <Style Selector="ListBoxItem">
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                    <Setter Property="Padding" Value="4,2" />
+                                    <Setter Property="MinHeight" Value="22" />
+                                </Style>
+                            </ListBox.Styles>
+                            <ListBox.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Copier les détails techniques"
+                                              Command="{Binding #RootWindow.DataContext.Export.CopyItemTechnicalDetailsCommand}"
+                                              CommandParameter="{Binding #ExportItemsListBox.SelectedItem}"
+                                              IsEnabled="{Binding #ExportItemsListBox.SelectedItem.HasTechnicalDetails, FallbackValue=False}" />
+                                </ContextMenu>
+                            </ListBox.ContextMenu>
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="vm:ExportItemViewModel">
+                                    <Grid ColumnDefinitions="16,*,75,70"
+                                          Margin="2,1"
+                                          ToolTip.Tip="{Binding Message}">
+                                        <Path Grid.Column="0"
+                                              Width="11"
+                                              Height="11"
+                                              Stretch="Uniform"
+                                              VerticalAlignment="Center"
+                                              StrokeThickness="1.8"
+                                              Data="{Binding Status, Converter={StaticResource ExportStatusGeometryConverter}}"
+                                              Stroke="{Binding Status, Converter={StaticResource ExportStatusStrokeConverter}}"
+                                              Fill="{Binding Status, Converter={StaticResource ExportStatusFillConverter}}" />
+
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding OutputFileName}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   FontSize="12"
+                                                   Margin="4,0,6,0" />
+
+                                        <ProgressBar Grid.Column="2"
+                                                     Minimum="0"
+                                                     Maximum="1"
+                                                     Height="6"
+                                                     Value="{Binding Fraction, Mode=OneWay}"
+                                                     Margin="0,0,6,0" />
+
+                                        <TextBlock Grid.Column="3"
+                                                   Text="{Binding StatusLabel}"
+                                                   FontSize="11"
+                                                   Foreground="{Binding Status, Converter={StaticResource ExportStatusTextBrushConverter}}"
+                                                   HorizontalAlignment="Right" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <DockPanel Grid.Row="3">
+                            <Button DockPanel.Dock="Right"
+                                    Content="Ouvrir le dossier"
+                                    Command="{Binding Export.OpenOutputFolderCommand}"
+                                    Padding="8,3"
+                                    MinHeight="24"
+                                    Focusable="False" />
+                            <TextBlock Text="{Binding Export.Summary}"
+                                       Classes="muted"
+                                       FontSize="11.5"
+                                       TextTrimming="CharacterEllipsis"
+                                       ToolTip.Tip="{Binding Export.Summary}"
+                                       Margin="0,0,8,0" />
+                        </DockPanel>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

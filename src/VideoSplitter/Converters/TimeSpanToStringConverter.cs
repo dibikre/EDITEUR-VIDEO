@@ -1,11 +1,12 @@
 using System.Globalization;
-using System.Windows.Data;
+using Avalonia.Data;
+using Avalonia.Data.Converters;
 
 namespace VideoSplitter.Converters;
 
 public sealed class TimeSpanToStringConverter : IValueConverter
 {
-    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         if (value is not TimeSpan ts)
         {
@@ -25,6 +26,6 @@ public sealed class TimeSpanToStringConverter : IValueConverter
             : $"{totalHours:D2}:{ts.Minutes:D2}:{ts.Seconds:D2}";
     }
 
-    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
-        => Binding.DoNothing;
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => BindingOperations.DoNothing;
 }

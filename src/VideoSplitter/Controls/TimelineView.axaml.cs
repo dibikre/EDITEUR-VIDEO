@@ -1,6 +1,7 @@
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Interactivity;
 using VideoSplitter.Services;
 using VideoSplitter.ViewModels;
 
@@ -11,87 +12,72 @@ public partial class TimelineView : UserControl
     private TimelineViewModel? _subscribedViewModel;
     private bool _isSyncingScrollBar;
 
-    public static readonly DependencyProperty DurationProperty = DependencyProperty.Register(
-        nameof(Duration),
-        typeof(TimeSpan),
-        typeof(TimelineView),
-        new PropertyMetadata(TimeSpan.Zero, OnViewportDependencyChanged));
+    public static readonly StyledProperty<TimeSpan> DurationProperty =
+        AvaloniaProperty.Register<TimelineView, TimeSpan>(nameof(Duration), TimeSpan.Zero);
 
-    public static readonly DependencyProperty PositionProperty = DependencyProperty.Register(
-        nameof(Position),
-        typeof(TimeSpan),
-        typeof(TimelineView),
-        new PropertyMetadata(TimeSpan.Zero));
+    public static readonly StyledProperty<TimeSpan> PositionProperty =
+        AvaloniaProperty.Register<TimelineView, TimeSpan>(nameof(Position), TimeSpan.Zero);
 
-    public static readonly DependencyProperty IsPlayingProperty = DependencyProperty.Register(
-        nameof(IsPlaying),
-        typeof(bool),
-        typeof(TimelineView),
-        new PropertyMetadata(false));
+    public static readonly StyledProperty<bool> IsPlayingProperty =
+        AvaloniaProperty.Register<TimelineView, bool>(nameof(IsPlaying), false);
 
-    public static readonly DependencyProperty PlaybackSpeedProperty = DependencyProperty.Register(
-        nameof(PlaybackSpeed),
-        typeof(double),
-        typeof(TimelineView),
-        new PropertyMetadata(1.0));
+    public static readonly StyledProperty<double> PlaybackSpeedProperty =
+        AvaloniaProperty.Register<TimelineView, double>(nameof(PlaybackSpeed), 1.0);
 
-    public static readonly DependencyProperty ThumbnailsProperty = DependencyProperty.Register(
-        nameof(Thumbnails),
-        typeof(IThumbnailProvider),
-        typeof(TimelineView),
-        new PropertyMetadata(null));
+    public static readonly StyledProperty<IThumbnailProvider?> ThumbnailsProperty =
+        AvaloniaProperty.Register<TimelineView, IThumbnailProvider?>(nameof(Thumbnails), null);
 
-    public static readonly DependencyProperty TimelineProperty = DependencyProperty.Register(
-        nameof(Timeline),
-        typeof(TimelineViewModel),
-        typeof(TimelineView),
-        new PropertyMetadata(null, OnTimelineViewModelChanged));
+    public static readonly StyledProperty<TimelineViewModel?> TimelineProperty =
+        AvaloniaProperty.Register<TimelineView, TimelineViewModel?>(nameof(Timeline), null);
 
-    public static readonly DependencyProperty EditProperty = DependencyProperty.Register(
-        nameof(Edit),
-        typeof(EditViewModel),
-        typeof(TimelineView),
-        new PropertyMetadata(null));
+    public static readonly StyledProperty<EditViewModel?> EditProperty =
+        AvaloniaProperty.Register<TimelineView, EditViewModel?>(nameof(Edit), null);
+
+    static TimelineView()
+    {
+        DurationProperty.Changed.AddClassHandler<TimelineView>((v, _) => v.SyncScrollBar());
+        TimelineProperty.Changed.AddClassHandler<TimelineView>((v, e) => v.AttachViewModel(e.NewValue as TimelineViewModel));
+    }
 
     public TimeSpan Duration
     {
-        get => (TimeSpan)GetValue(DurationProperty);
+        get => GetValue(DurationProperty);
         set => SetValue(DurationProperty, value);
     }
 
     public TimeSpan Position
     {
-        get => (TimeSpan)GetValue(PositionProperty);
+        get => GetValue(PositionProperty);
         set => SetValue(PositionProperty, value);
     }
 
     public bool IsPlaying
     {
-        get => (bool)GetValue(IsPlayingProperty);
+        get => GetValue(IsPlayingProperty);
         set => SetValue(IsPlayingProperty, value);
     }
 
     public double PlaybackSpeed
     {
-        get => (double)GetValue(PlaybackSpeedProperty);
+        get => GetValue(PlaybackSpeedProperty);
         set => SetValue(PlaybackSpeedProperty, value);
     }
 
     public IThumbnailProvider? Thumbnails
     {
-        get => (IThumbnailProvider?)GetValue(ThumbnailsProperty);
+        get => GetValue(ThumbnailsProperty);
         set => SetValue(ThumbnailsProperty, value);
     }
 
     public TimelineViewModel? Timeline
     {
-        get => (TimelineViewModel?)GetValue(TimelineProperty);
+        get => GetValue(TimelineProperty);
         set => SetValue(TimelineProperty, value);
     }
 
     public EditViewModel? Edit
     {
-        get => (EditViewModel?)GetValue(EditProperty);
+        get => GetValue(EditProperty);
         set => SetValue(EditProperty, value);
     }
 
@@ -110,25 +96,9 @@ public partial class TimelineView : UserControl
 
     public bool CancelActiveDrag() => TimelineCanvas.CancelActiveDrag();
 
-    private void OnUnloaded(object sender, RoutedEventArgs e)
+    private void OnUnloaded(object? sender, RoutedEventArgs e)
     {
         UnsubscribeViewModel();
-    }
-
-    private static void OnViewportDependencyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
-    {
-        if (d is TimelineView view)
-        {
-            view.SyncScrollBar();
-        }
-    }
-
-    private static void OnTimelineViewModelChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
-    {
-        if (d is TimelineView view)
-        {
-            view.AttachViewModel(e.NewValue as TimelineViewModel);
-        }
     }
 
     private void AttachViewModel(TimelineViewModel? vm)
@@ -190,7 +160,7 @@ public partial class TimelineView : UserControl
         SyncScrollBar();
     }
 
-    private void OnScrollBarScroll(object sender, ScrollEventArgs e)
+    private void OnScrollBarScroll(object? sender, ScrollEventArgs e)
     {
         if (_isSyncingScrollBar)
         {
@@ -204,7 +174,7 @@ public partial class TimelineView : UserControl
     private void SyncScrollBar()
     {
         double totalSeconds = Duration > TimeSpan.Zero ? Duration.TotalSeconds : 0.0;
-        double width = TimelineCanvas.ActualWidth;
+        double width = TimelineCanvas.Bounds.Width;
         double pps = TimelineCanvas.PixelsPerSecond;
 
         _isSyncingScrollBar = true;
