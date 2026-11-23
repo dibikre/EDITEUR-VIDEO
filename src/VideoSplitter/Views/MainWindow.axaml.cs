@@ -5,6 +5,7 @@ using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using Microsoft.Extensions.DependencyInjection;
 using VideoSplitter.Models;
 using VideoSplitter.Services;
 using VideoSplitter.ViewModels;
@@ -19,13 +20,19 @@ public partial class MainWindow : Window
         Patterns = ["*.mp4", "*.mkv", "*.mov", "*.avi", "*.webm", "*.m4v", "*.ts", "*.wmv", "*.flv", "*.mpg"]
     };
 
-    private readonly MainViewModel _viewModel;
-    private readonly VlcMediaPlayer _mediaPlayer;
-    private readonly IAppLogger _logger;
+    private readonly MainViewModel _viewModel = null!;
+    private readonly VlcMediaPlayer _mediaPlayer = null!;
+    private readonly IAppLogger _logger = null!;
     private SegmentRowViewModel? _mouseDownAlreadySelectedRow;
     private bool _isClosingAfterExportCancel;
     private bool _isClosingPromptOpen;
 
+    public MainWindow()
+    {
+        InitializeComponent();
+    }
+
+    [ActivatorUtilitiesConstructor]
     public MainWindow(MainViewModel viewModel, VlcMediaPlayer mediaPlayer, IAppLogger logger)
     {
         InitializeComponent();
