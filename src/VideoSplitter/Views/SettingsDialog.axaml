@@ -1,0 +1,118 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:VideoSplitter.ViewModels"
+        x:Class="VideoSplitter.Views.SettingsDialog"
+        x:DataType="vm:SettingsViewModel"
+        Title="VideoSplitter — Paramètres"
+        Width="520"
+        SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+
+    <Border Background="{StaticResource SurfaceBrush}" Padding="18">
+        <StackPanel Spacing="14">
+            <!-- Mode d'export -->
+            <Border x:Name="ExportModeSectionBorder"
+                    Background="{StaticResource WindowBackgroundBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="12">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="MODE D'EXPORT" Classes="section-title" />
+
+                    <RadioButton Content="Rapide (par défaut)"
+                                 GroupName="SettingsExportMode"
+                                 IsChecked="{Binding IsFastMode, Mode=TwoWay}"
+                                 Focusable="False" />
+                    <TextBlock Text="Sans perte de qualité, coupe sur keyframe, quasi instantané."
+                               Classes="muted"
+                               Margin="24,-2,0,4"
+                               TextWrapping="Wrap" />
+
+                    <RadioButton Content="Précis"
+                                 GroupName="SettingsExportMode"
+                                 IsChecked="{Binding IsPreciseMode, Mode=TwoWay}"
+                                 Focusable="False" />
+                    <TextBlock Text="Ré-encodage H.264/AAC, coupe exacte à l'image près, plus lent."
+                               Classes="muted"
+                               Margin="24,-2,0,0"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <!-- Emplacement de sortie final -->
+            <Border x:Name="OutputFolderSectionBorder"
+                    Background="{StaticResource WindowBackgroundBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="12">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="ENREGISTREMENT DE LA SORTIE FINALE" Classes="section-title" />
+
+                    <RadioButton Content="Même dossier que la vidéo source (par défaut)"
+                                 GroupName="SettingsOutputFolder"
+                                 IsChecked="{Binding IsSameAsSourceFolder, Mode=TwoWay}"
+                                 Focusable="False" />
+
+                    <RadioButton Content="Choisir un dossier personnalisé dans l'explorateur Windows"
+                                 GroupName="SettingsOutputFolder"
+                                 IsChecked="{Binding IsCustomOutputFolder, Mode=TwoWay}"
+                                 Focusable="False" />
+
+                    <Grid ColumnDefinitions="*,Auto"
+                          Margin="24,2,0,0"
+                          IsEnabled="{Binding IsCustomOutputFolder}">
+                        <TextBox Grid.Column="0"
+                                 Text="{Binding CustomFolderDisplay, Mode=OneWay}"
+                                 IsReadOnly="True"
+                                 ToolTip.Tip="{Binding CustomFolderDisplay}"
+                                 Margin="0,0,8,0" />
+                        <Button Grid.Column="1"
+                                Content="Parcourir…"
+                                Command="{Binding BrowseCustomFolderCommand}"
+                                Padding="10,4"
+                                MinHeight="26"
+                                Focusable="False" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- Interface lecteur -->
+            <Border Background="{StaticResource WindowBackgroundBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="12">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="LECTEUR AUDIO" Classes="section-title" />
+
+                    <CheckBox Content="Afficher la jauge de son (par défaut)"
+                              IsChecked="{Binding ShowVolumeGauge, Mode=TwoWay}"
+                              Focusable="False" />
+                </StackPanel>
+            </Border>
+
+            <!-- Bouton de fermeture -->
+            <DockPanel LastChildFill="False">
+                <TextBlock x:Name="ExportLockHintText"
+                           DockPanel.Dock="Left"
+                           Text="Les options d'export sont verrouillées pendant un export en cours."
+                           Classes="muted"
+                           TextWrapping="Wrap"
+                           MaxWidth="360"
+                           Margin="0,0,12,0"
+                           IsVisible="False" />
+                <Button DockPanel.Dock="Right"
+                        Content="Fermer"
+                        Classes="primary"
+                        IsDefault="True"
+                        IsCancel="True"
+                        Click="OnCloseClick"
+                        MinWidth="96" />
+            </DockPanel>
+        </StackPanel>
+    </Border>
+</Window>

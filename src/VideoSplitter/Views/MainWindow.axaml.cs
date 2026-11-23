@@ -33,6 +33,7 @@ public partial class MainWindow : Window
     private bool _isClosingPromptOpen;
     private bool _isPortraitLayout;
     private bool _startupBoundsApplied;
+    private SettingsDialog? _activeSettingsDialog;
 
     public MainWindow()
     {
@@ -86,6 +87,26 @@ public partial class MainWindow : Window
                 "Un export est en cours. L'annuler et ouvrir la nouvelle vidéo ?",
                 isConfirmation: true);
 
+        _viewModel.Settings.PickFolderAsync = async initialDirectory =>
+        {
+            IStorageProvider provider = _activeSettingsDialog?.StorageProvider ?? StorageProvider;
+            IStorageFolder? suggestedLocation = null;
+            if (!string.IsNullOrWhiteSpace(initialDirectory) && Directory.Exists(initialDirectory))
+            {
+                suggestedLocation = await provider.TryGetFolderFromPathAsync(initialDirectory);
+            }
+
+            IReadOnlyList<IStorageFolder> folders = await provider.OpenFolderPickerAsync(
+                new FolderPickerOpenOptions
+                {
+                    Title = "Choisir le dossier de sortie",
+                    AllowMultiple = false,
+                    SuggestedStartLocation = suggestedLocation
+                });
+
+            return folders.Count > 0 ? folders[0].TryGetLocalPath() : null;
+        };
+
         _viewModel.Export.ConfigureBridges(
             sourceProvider: () => (_viewModel.Player.MediaInfo, _viewModel.Edit.Segments, _viewModel.Edit.Keyframes),
             fastCutWarningPrompt: async (outOfKeyframeCount, keyframesUnavailable, allowPerSegmentPrecise) =>
@@ -102,24 +123,6 @@ public partial class MainWindow : Window
                 ShowDialogMessageAsync("VideoSplitter — Avertissement", message, isConfirmation: true),
             errorPrompt: message =>
                 ShowDialogMessageAsync("VideoSplitter — Erreur d'export", message, isConfirmation: false),
-            pickFolderPrompt: async initialDirectory =>
-            {
-                IStorageFolder? suggestedLocation = null;
-                if (!string.IsNullOrWhiteSpace(initialDirectory) && Directory.Exists(initialDirectory))
-                {
-                    suggestedLocation = await StorageProvider.TryGetFolderFromPathAsync(initialDirectory);
-                }
-
-                IReadOnlyList<IStorageFolder> folders = await StorageProvider.OpenFolderPickerAsync(
-                    new FolderPickerOpenOptions
-                    {
-                        Title = "Choisir le dossier de sortie",
-                        AllowMultiple = false,
-                        SuggestedStartLocation = suggestedLocation
-                    });
-
-                return folders.Count > 0 ? folders[0].TryGetLocalPath() : null;
-            },
             copyTextAction: async text =>
             {
                 if (Clipboard is not null)
@@ -127,6 +130,20 @@ public partial class MainWindow : Window
                     await Clipboard.SetTextAsync(text);
                 }
             });
+    }
+
+    private async void OnOpenSettingsClick(object? sender, RoutedEventArgs e)
+    {
+        var dialog = new SettingsDialog(_viewModel.Settings, _viewModel.Export.IsExporting);
+        _activeSettingsDialog = dialog;
+        try
+        {
+            await dialog.ShowDialog(this);
+        }
+        finally
+        {
+            _activeSettingsDialog = null;
+        }
     }
 
     private Task<bool> ShowDialogMessageAsync(string title, string message, bool isConfirmation)
@@ -244,6 +261,7 @@ public partial class MainWindow : Window
         _viewModel.Player.ErrorOccurred -= OnPlayerErrorOccurred;
         _viewModel.Player.PropertyChanged -= OnPlayerPropertyChanged;
         _viewModel.Player.PickVideoFileAsync = null;
+        _viewModel.Settings.PickFolderAsync = null;
         _viewModel.ConfirmAbortExportForOpenAsync = null;
 
         RemoveHandler(DragDrop.DragOverEvent, OnWindowDragOver);

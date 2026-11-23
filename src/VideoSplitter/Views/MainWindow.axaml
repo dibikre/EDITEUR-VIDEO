@@ -65,26 +65,6 @@
                             </MenuFlyout>
                         </Button.Flyout>
                     </Button>
-
-                    <Border Width="1"
-                            Height="20"
-                            Background="{StaticResource BorderBrush}"
-                            Margin="0,0,16,0" />
-
-                    <TextBlock Text="Mode :"
-                               Classes="muted"
-                               Margin="0,0,10,0" />
-                    <RadioButton Content="Rapide"
-                                 GroupName="TopExportMode"
-                                 IsChecked="{Binding Export.Mode, Converter={StaticResource EnumBoolConverter}, ConverterParameter=Fast, Mode=TwoWay}"
-                                 ToolTip.Tip="Rapide : sans perte, quasi instantané, la coupe peut être décalée jusqu'au keyframe précédent.&#x0a;Précis : ré-encodage H.264/AAC, coupe exacte à l'image, plus lent."
-                                 Focusable="False"
-                                 Margin="0,0,12,0" />
-                    <RadioButton Content="Précis"
-                                 GroupName="TopExportMode"
-                                 IsChecked="{Binding Export.Mode, Converter={StaticResource EnumBoolConverter}, ConverterParameter=Precise, Mode=TwoWay}"
-                                 ToolTip.Tip="Rapide : sans perte, quasi instantané, la coupe peut être décalée jusqu'au keyframe précédent.&#x0a;Précis : ré-encodage H.264/AAC, coupe exacte à l'image, plus lent."
-                                 Focusable="False" />
                 </StackPanel>
 
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
@@ -93,6 +73,19 @@
                                Margin="0,0,14,0" />
                     <TextBlock Text="{Binding Player.MediaSummary}"
                                Classes="muted" />
+                    <Button x:Name="SettingsButton"
+                            Click="OnOpenSettingsClick"
+                            Focusable="False"
+                            Padding="7"
+                            MinWidth="30"
+                            MinHeight="30"
+                            Margin="14,0,0,0"
+                            ToolTip.Tip="Paramètres">
+                        <Viewbox Width="15" Height="15" Stretch="Uniform">
+                            <Path Fill="{StaticResource TextPrimaryBrush}"
+                                  Data="M12,15.5A3.5,3.5 0 0,1 8.5,12A3.5,3.5 0 0,1 12,8.5A3.5,3.5 0 0,1 15.5,12A3.5,3.5 0 0,1 12,15.5M19.43,12.97C19.47,12.65 19.5,12.33 19.5,12C19.5,11.67 19.47,11.34 19.43,11L21.54,9.37C21.73,9.22 21.78,8.95 21.66,8.73L19.66,5.27C19.54,5.05 19.27,4.96 19.05,5.05L16.56,6.05C16.04,5.66 15.5,5.32 14.87,5.07L14.5,2.42C14.46,2.18 14.25,2 14,2H10C9.75,2 9.54,2.18 9.5,2.42L9.13,5.07C8.5,5.32 7.96,5.66 7.44,6.05L4.95,5.05C4.73,4.96 4.46,5.05 4.34,5.27L2.34,8.73C2.21,8.95 2.27,9.22 2.46,9.37L4.57,11C4.53,11.34 4.5,11.67 4.5,12C4.5,12.33 4.53,12.65 4.57,12.97L2.46,14.63C2.27,14.78 2.21,15.05 2.34,15.27L4.34,18.73C4.46,18.95 4.73,19.03 4.95,18.95L7.44,17.94C7.96,18.34 8.5,18.68 9.13,18.93L9.5,21.58C9.54,21.82 9.75,22 10,22H14C14.25,22 14.46,21.82 14.5,21.58L14.87,18.93C15.5,18.67 16.04,18.34 16.56,17.94L19.05,18.95C19.27,19.03 19.54,18.95 19.66,18.73L21.66,15.27C21.78,15.05 21.73,14.78 21.54,14.63L19.43,12.97Z" />
+                        </Viewbox>
+                    </Button>
                 </StackPanel>
             </DockPanel>
         </Border>
@@ -180,18 +173,22 @@
                                     Orientation="Horizontal"
                                     HorizontalAlignment="Right"
                                     VerticalAlignment="Center">
-                            <Button Content="{Binding Player.IsMuted, Converter={StaticResource BoolToTextConverter}, ConverterParameter=Muet|Son}"
-                                    Command="{Binding Player.ToggleMuteCommand}"
-                                    Focusable="False"
-                                    MinWidth="58"
-                                    Margin="0,0,8,0" />
-                            <Slider Width="95"
-                                    Minimum="0"
-                                    Maximum="100"
-                                    Value="{Binding Player.Volume, Mode=TwoWay}"
-                                    Focusable="False"
-                                    IsEnabled="{Binding Player.IsMediaLoaded}"
-                                    Margin="0,0,16,0" />
+                            <StackPanel Orientation="Horizontal"
+                                        VerticalAlignment="Center"
+                                        Margin="0,0,16,0">
+                                <Button Content="{Binding Player.IsMuted, Converter={StaticResource BoolToTextConverter}, ConverterParameter=Muet|Son}"
+                                        Command="{Binding Player.ToggleMuteCommand}"
+                                        Focusable="False"
+                                        MinWidth="58" />
+                                <Slider Width="95"
+                                        Minimum="0"
+                                        Maximum="100"
+                                        Value="{Binding Player.Volume, Mode=TwoWay}"
+                                        Focusable="False"
+                                        IsEnabled="{Binding Player.IsMediaLoaded}"
+                                        IsVisible="{Binding Settings.ShowVolumeGauge}"
+                                        Margin="8,0,0,0" />
+                            </StackPanel>
 
                             <TextBlock Text="Vitesse :" Classes="muted" Margin="0,0,6,0" />
                             <ComboBox Width="78"
@@ -365,41 +362,22 @@
                             CornerRadius="4"
                             Padding="10">
                     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                        <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto"
+                        <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto"
                               ColumnDefinitions="72,*">
                             <TextBlock Grid.Row="0" Grid.ColumnSpan="2"
                                        Text="OPTIONS D'EXPORT"
                                        Classes="section-title" />
 
-                            <!-- Mode -->
-                            <TextBlock Grid.Row="1" Grid.Column="0"
-                                       Text="Mode :"
-                                       Classes="muted"
-                                       Margin="0,0,0,6" />
-                            <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Margin="0,0,0,6">
-                                <RadioButton Content="Rapide"
-                                             GroupName="BottomExportMode"
-                                             IsChecked="{Binding Export.Mode, Converter={StaticResource EnumBoolConverter}, ConverterParameter=Fast, Mode=TwoWay}"
-                                             ToolTip.Tip="Rapide : sans perte, quasi instantané, la coupe peut être décalée jusqu'au keyframe précédent.&#x0a;Précis : ré-encodage H.264/AAC, coupe exacte à l'image, plus lent."
-                                             Focusable="False"
-                                             Margin="0,0,12,0" />
-                                <RadioButton Content="Précis"
-                                             GroupName="BottomExportMode"
-                                             IsChecked="{Binding Export.Mode, Converter={StaticResource EnumBoolConverter}, ConverterParameter=Precise, Mode=TwoWay}"
-                                             ToolTip.Tip="Rapide : sans perte, quasi instantané, la coupe peut être décalée jusqu'au keyframe précédent.&#x0a;Précis : ré-encodage H.264/AAC, coupe exacte à l'image, plus lent."
-                                             Focusable="False" />
-                            </StackPanel>
-
                             <!-- Qualite CRF -->
-                            <TextBlock Grid.Row="2" Grid.Column="0"
+                            <TextBlock Grid.Row="1" Grid.Column="0"
                                        Text="Qualité :"
                                        Classes="muted"
                                        IsEnabled="{Binding Export.IsPreciseMode}"
-                                       Margin="0,0,0,6" />
-                            <Grid Grid.Row="2" Grid.Column="1"
+                                       Margin="0,0,0,8" />
+                            <Grid Grid.Row="1" Grid.Column="1"
                                   ColumnDefinitions="*,Auto"
                                   IsEnabled="{Binding Export.IsPreciseMode}"
-                                  Margin="0,0,0,6">
+                                  Margin="0,0,0,8">
                                 <Slider Grid.Column="0"
                                         Minimum="14"
                                         Maximum="28"
@@ -417,14 +395,14 @@
                             </Grid>
 
                             <!-- Encodeur -->
-                            <TextBlock Grid.Row="3" Grid.Column="0"
+                            <TextBlock Grid.Row="2" Grid.Column="0"
                                        Text="Encodeur :"
                                        Classes="muted"
                                        IsEnabled="{Binding Export.IsPreciseMode}"
-                                       Margin="0,0,0,6" />
-                            <Grid Grid.Row="3" Grid.Column="1"
+                                       Margin="0,0,0,8" />
+                            <Grid Grid.Row="2" Grid.Column="1"
                                   ColumnDefinitions="*,Auto"
-                                  Margin="0,0,0,6">
+                                  Margin="0,0,0,8">
                                 <ComboBox Grid.Column="0"
                                           ItemsSource="{Binding Export.EncoderOptions}"
                                           SelectedValueBinding="{Binding Kind}"
@@ -445,49 +423,30 @@
                                            Margin="8,0,0,0" />
                             </Grid>
 
-                            <!-- Dossier de sortie -->
-                            <TextBlock Grid.Row="4" Grid.Column="0"
-                                       Text="Dossier :"
-                                       Classes="muted"
-                                       Margin="0,0,0,6" />
-                            <Grid Grid.Row="4" Grid.Column="1"
-                                  ColumnDefinitions="*,Auto,Auto"
-                                  Margin="0,0,0,6">
-                                <TextBox Grid.Column="0"
-                                         Text="{Binding Export.OutputFolder, Mode=TwoWay}"
-                                         ToolTip.Tip="{Binding Export.OutputFolder}"
-                                         Margin="0,0,4,0" />
-                                <Button Grid.Column="1"
-                                        Content="Parcourir…"
-                                        Command="{Binding Export.BrowseFolderCommand}"
-                                        Padding="7,3"
-                                        MinHeight="24"
-                                        Focusable="False"
-                                        Margin="0,0,4,0" />
-                                <Button Grid.Column="2"
-                                        Content="Ouvrir"
-                                        Command="{Binding Export.OpenOutputFolderCommand}"
-                                        Padding="7,3"
-                                        MinHeight="24"
-                                        Focusable="False" />
-                            </Grid>
-
                             <!-- Modele de nom -->
-                            <TextBlock Grid.Row="5" Grid.Column="0"
+                            <TextBlock Grid.Row="3" Grid.Column="0"
                                        Text="Modèle :"
                                        Classes="muted"
-                                       Margin="0,0,0,4" />
-                            <TextBox Grid.Row="5" Grid.Column="1"
+                                       Margin="0,0,0,6" />
+                            <TextBox Grid.Row="3" Grid.Column="1"
                                      Text="{Binding Export.FileNamePattern, Mode=TwoWay}"
                                      ToolTip.Tip="Jetons : {nom} (fichier source), {NN} (numéro), {debut} (hh-mm-ss), {segment} (nom du segment)"
-                                     Margin="0,0,0,4" />
+                                     Margin="0,0,0,6" />
 
-                            <TextBlock Grid.Row="6" Grid.Column="1"
+                            <TextBlock Grid.Row="4" Grid.Column="1"
                                        Text="{Binding Export.PreviewFileName}"
                                        Classes="muted"
                                        FontSize="11"
                                        TextTrimming="CharacterEllipsis"
-                                       ToolTip.Tip="{Binding Export.PreviewFileName}" />
+                                       ToolTip.Tip="{Binding Export.PreviewFileName}"
+                                       Margin="0,0,0,6" />
+
+                            <TextBlock Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2"
+                                       Text="{Binding Settings.ExportSummaryText}"
+                                       Classes="muted"
+                                       FontSize="11"
+                                       TextTrimming="CharacterEllipsis"
+                                       ToolTip.Tip="{Binding Settings.ExportSummaryText}" />
                         </Grid>
                     </ScrollViewer>
                 </Border>

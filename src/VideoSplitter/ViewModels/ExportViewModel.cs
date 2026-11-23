@@ -62,7 +62,6 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
     private Func<IReadOnlyList<string>, Task<ConflictPolicy?>>? _conflictPrompt;
     private Func<string, Task<bool>>? _confirmContinuePrompt;
     private Func<string, Task>? _errorPrompt;
-    private Func<string?, Task<string?>>? _pickFolderPrompt;
     private Func<string, Task>? _copyTextAction;
 
     private CancellationTokenSource? _encoderDetectCts;
@@ -70,6 +69,8 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
     private Task? _activeExportTask;
     private EncoderCapabilities _capabilities = new(new HashSet<EncoderKind> { EncoderKind.Cpu });
     private MediaInfo? _currentMedia;
+    private OutputFolderMode _outputFolderMode = OutputFolderMode.SameAsSource;
+    private string _customOutputFolder = string.Empty;
     private bool _hasEnabledSegments;
     private bool _disposed;
 
@@ -116,7 +117,6 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
         nameof(ExportSeparateSegmentsCommand),
         nameof(ExportSingleVideoCommand),
         nameof(CancelCommand),
-        nameof(BrowseFolderCommand),
         nameof(OpenOutputFolderCommand))]
     private bool _isExporting;
 
@@ -203,7 +203,6 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
         Func<IReadOnlyList<string>, Task<ConflictPolicy?>> conflictPrompt,
         Func<string, Task<bool>> confirmContinuePrompt,
         Func<string, Task> errorPrompt,
-        Func<string?, Task<string?>> pickFolderPrompt,
         Func<string, Task> copyTextAction)
     {
         _sourceProvider = sourceProvider;
@@ -211,14 +210,20 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
         _conflictPrompt = conflictPrompt;
         _confirmContinuePrompt = confirmContinuePrompt;
         _errorPrompt = errorPrompt;
-        _pickFolderPrompt = pickFolderPrompt;
         _copyTextAction = copyTextAction;
+    }
+
+    public void ConfigureOutputLocation(OutputFolderMode folderMode, string customFolder)
+    {
+        _outputFolderMode = folderMode;
+        _customOutputFolder = customFolder?.Trim() ?? string.Empty;
+        OutputFolder = ResolveTargetOutputFolder(_currentMedia);
     }
 
     public void OnVideoOpened(MediaInfo media)
     {
         _currentMedia = media;
-        OutputFolder = Path.GetDirectoryName(media.Path) ?? string.Empty;
+        OutputFolder = ResolveTargetOutputFolder(media);
         HasExportErrors = false;
         Summary = string.Empty;
         EstimatedRemaining = string.Empty;
@@ -226,6 +231,18 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
         Items.Clear();
         _lastExportedFiles.Clear();
         NotifySegmentsChanged();
+    }
+
+    private string ResolveTargetOutputFolder(MediaInfo? media)
+    {
+        if (_outputFolderMode == OutputFolderMode.CustomFolder && !string.IsNullOrWhiteSpace(_customOutputFolder))
+        {
+            return _customOutputFolder;
+        }
+
+        return media is not null
+            ? Path.GetDirectoryName(media.Path) ?? string.Empty
+            : string.Empty;
     }
 
     public void NotifySegmentsChanged()
@@ -713,27 +730,6 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
         _logger.Info("Annulation de l'export demandée par l'utilisateur.");
         _exportCts?.Cancel();
     }
-
-    [RelayCommand(CanExecute = nameof(CanBrowseFolder))]
-    private async Task BrowseFolderAsync()
-    {
-        if (_pickFolderPrompt is null)
-        {
-            return;
-        }
-
-        string? initialDir = !string.IsNullOrWhiteSpace(OutputFolder) && Directory.Exists(OutputFolder)
-            ? OutputFolder
-            : null;
-
-        string? selected = await _pickFolderPrompt.Invoke(initialDir);
-        if (!string.IsNullOrWhiteSpace(selected))
-        {
-            OutputFolder = selected;
-        }
-    }
-
-    private bool CanBrowseFolder() => !IsExporting;
 
     [RelayCommand(CanExecute = nameof(CanOpenOutputFolder))]
     private void OpenOutputFolder()

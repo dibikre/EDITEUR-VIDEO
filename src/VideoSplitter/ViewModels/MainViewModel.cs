@@ -13,6 +13,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public TimelineViewModel Timeline { get; }
     public EditViewModel Edit { get; }
     public ExportViewModel Export { get; }
+    public SettingsViewModel Settings { get; }
 
     public Func<Task<bool>>? ConfirmAbortExportForOpenAsync { get; set; }
 
@@ -24,13 +25,18 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         TimelineViewModel timeline,
         EditViewModel edit,
         ExportViewModel export,
+        SettingsViewModel settings,
         IAppLogger logger)
     {
         Player = player;
         Timeline = timeline;
         Edit = edit;
         Export = export;
+        Settings = settings;
         _logger = logger;
+
+        Export.Mode = Settings.ExportMode;
+        Export.ConfigureOutputLocation(Settings.OutputFolderMode, Settings.CustomOutputFolder);
 
         Edit.ConfigurePlaybackBridge(
             () => (Player.Position, Timeline.PixelsPerSecond),
@@ -39,6 +45,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         Player.BeforeOpenConfirmAsync = ConfirmAndAbortExportBeforeOpenAsync;
         Player.PropertyChanged += OnPlayerPropertyChanged;
         Edit.PropertyChanged += OnEditPropertyChanged;
+        Settings.PropertyChanged += OnSettingsPropertyChanged;
 
         _logger.Info("MainViewModel initialise.");
     }
@@ -86,10 +93,23 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
+    private void OnSettingsPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(SettingsViewModel.ExportMode))
+        {
+            Export.Mode = Settings.ExportMode;
+        }
+        else if (e.PropertyName is nameof(SettingsViewModel.OutputFolderMode) or nameof(SettingsViewModel.CustomOutputFolder))
+        {
+            Export.ConfigureOutputLocation(Settings.OutputFolderMode, Settings.CustomOutputFolder);
+        }
+    }
+
     public void Dispose()
     {
         Player.PropertyChanged -= OnPlayerPropertyChanged;
         Edit.PropertyChanged -= OnEditPropertyChanged;
+        Settings.PropertyChanged -= OnSettingsPropertyChanged;
         Player.BeforeOpenConfirmAsync = null;
     }
 }

@@ -76,10 +76,12 @@ public partial class App : Application
         services.AddSingleton(sp => new VlcMediaPlayer(sp.GetRequiredService<LibVLC>()));
         services.AddSingleton<IFfmpegService, FfmpegService>();
         services.AddSingleton<ICacheService, CacheService>();
+        services.AddSingleton<ISettingsService, SettingsService>();
         services.AddSingleton<IThumbnailService, ThumbnailService>();
         services.AddSingleton<IExportService, ExportService>();
         services.AddSingleton<IExportQueue, ExportQueue>();
 
+        services.AddSingleton<SettingsViewModel>();
         services.AddSingleton<PlayerViewModel>();
         services.AddSingleton<TimelineViewModel>();
         services.AddSingleton<EditViewModel>();
