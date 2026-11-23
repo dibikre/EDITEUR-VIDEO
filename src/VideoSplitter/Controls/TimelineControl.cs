@@ -50,19 +50,19 @@ public sealed class TimelineControl : Control
     private readonly Dictionary<SegmentLabelKey, FormattedText> _segmentLabelCache = new(MaxFormattedTextCacheEntries);
 
     // Ressources graphiques immuables
-    private IBrush _backgroundBrush = Brushes.Transparent;
-    private IBrush _rulerBackgroundBrush = Brushes.Transparent;
-    private IBrush _tilePlaceholderBrush = Brushes.Transparent;
-    private IBrush _textPrimaryBrush = Brushes.White;
-    private IBrush _textSecondaryBrush = Brushes.Gray;
-    private IBrush _textMutedBrush = Brushes.Gray;
-    private IBrush _playheadBrush = Brushes.DodgerBlue;
-    private IBrush _segmentEvenBrush = Brushes.DarkSlateBlue;
-    private IBrush _segmentOddBrush = Brushes.SlateBlue;
-    private IBrush _segmentDisabledBrush = Brushes.DimGray;
-    private IBrush _disabledFilmstripScrimBrush = Brushes.Transparent;
-    private IBrush _markerBrush = Brushes.Orange;
-    private IBrush _markerSelectedBrush = Brushes.Red;
+    private IImmutableBrush _backgroundBrush = Brushes.Transparent;
+    private IImmutableBrush _rulerBackgroundBrush = Brushes.Transparent;
+    private IImmutableBrush _tilePlaceholderBrush = Brushes.Transparent;
+    private IImmutableBrush _textPrimaryBrush = Brushes.White;
+    private IImmutableBrush _textSecondaryBrush = Brushes.Gray;
+    private IImmutableBrush _textMutedBrush = Brushes.Gray;
+    private IImmutableBrush _playheadBrush = Brushes.DodgerBlue;
+    private IImmutableBrush _segmentEvenBrush = Brushes.DarkSlateBlue;
+    private IImmutableBrush _segmentOddBrush = Brushes.SlateBlue;
+    private IImmutableBrush _segmentDisabledBrush = Brushes.DimGray;
+    private IImmutableBrush _disabledFilmstripScrimBrush = Brushes.Transparent;
+    private IImmutableBrush _markerBrush = Brushes.Orange;
+    private IImmutableBrush _markerSelectedBrush = Brushes.Red;
     private IPen _borderPen = null!;
     private IPen _majorTickPen = null!;
     private IPen _minorTickPen = null!;
@@ -1596,8 +1596,8 @@ public sealed class TimelineControl : Control
         _markerBrush = new ImmutableSolidColorBrush(Color.FromRgb(0xF5, 0x9E, 0x0B));
         _markerSelectedBrush = new ImmutableSolidColorBrush(Color.FromRgb(0xEF, 0x44, 0x44));
 
-        IBrush borderBrush = ResolveBrush("BorderBrush", Color.FromRgb(0x2E, 0x34, 0x40));
-        IBrush selectedBorderBrush = ResolveBrush("AccentHoverBrush", Color.FromRgb(0x60, 0xA5, 0xFA));
+        IImmutableBrush borderBrush = ResolveBrush("BorderBrush", Color.FromRgb(0x2E, 0x34, 0x40));
+        IImmutableBrush selectedBorderBrush = ResolveBrush("AccentHoverBrush", Color.FromRgb(0x60, 0xA5, 0xFA));
 
         _borderPen = new ImmutablePen(borderBrush, 1.0);
         _majorTickPen = new ImmutablePen(_textSecondaryBrush, 1.0);
@@ -1609,7 +1609,7 @@ public sealed class TimelineControl : Control
         _markerSelectedPen = new ImmutablePen(_markerSelectedBrush, 2.5);
         _markerHandleOutlinePen = new ImmutablePen(_backgroundBrush, 1.0);
 
-        IBrush hoverBrush = new ImmutableSolidColorBrush(Color.FromArgb(0x99, 0xED, 0xF0, 0xF5));
+        IImmutableBrush hoverBrush = new ImmutableSolidColorBrush(Color.FromArgb(0x99, 0xED, 0xF0, 0xF5));
         _hoverPen = new ImmutablePen(hoverBrush, 1.0);
 
         var diamond = new StreamGeometry();
@@ -1628,7 +1628,7 @@ public sealed class TimelineControl : Control
         _emptyTypeface = new Typeface("Segoe UI");
     }
 
-    private IBrush ResolveBrush(string resourceKey, Color fallbackColor)
+    private IImmutableBrush ResolveBrush(string resourceKey, Color fallbackColor)
     {
         if (this.TryFindResource(resourceKey, ActualThemeVariant, out object? found)
             && found is ISolidColorBrush solid)

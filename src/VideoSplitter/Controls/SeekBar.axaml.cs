@@ -269,10 +269,10 @@ public partial class SeekBar : UserControl
         _hoverPopup.Update(this, mousePosition, time, image, Duration);
     }
 
-    private static IBrush CreateBrush(byte r, byte g, byte b)
+    private static IImmutableBrush CreateBrush(byte r, byte g, byte b)
         => new ImmutableSolidColorBrush(Color.FromRgb(r, g, b));
 
-    private static IBrush CreateBrush(byte a, byte r, byte g, byte b)
+    private static IImmutableBrush CreateBrush(byte a, byte r, byte g, byte b)
         => new ImmutableSolidColorBrush(Color.FromArgb(a, r, g, b));
 
     private static IPen CreatePen(byte r, byte g, byte b, double thickness)
