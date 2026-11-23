@@ -278,13 +278,15 @@ public sealed partial class EditViewModel : ObservableObject, IDisposable
 
     private bool CanSplit() => HasMedia;
 
-    [RelayCommand(CanExecute = nameof(CanSetInOut))]
-    private void SetIn()
+    public void SetInAt(TimeSpan target)
     {
-        (TimeSpan pos, _) = GetPlaybackContext();
-        int previousCount = Segments.Count;
+        if (!HasMedia)
+        {
+            return;
+        }
 
-        SegmentEditResult result = SegmentEditor.SetIn(Segments, pos, _nextSegmentNumber);
+        int previousCount = Segments.Count;
+        SegmentEditResult result = SegmentEditor.SetIn(Segments, target, _nextSegmentNumber);
         if (!result.Success)
         {
             ShowTransientStatus(result.ErrorMessage ?? "Point d'entree invalide.");
@@ -296,21 +298,23 @@ public sealed partial class EditViewModel : ObservableObject, IDisposable
             _nextSegmentNumber++;
         }
 
-        int containingIdx = SegmentEditor.ContainingIndex(result.Segments, pos);
+        int containingIdx = SegmentEditor.ContainingIndex(result.Segments, target);
         Guid? nextSelection = result.CreatedSegmentId
             ?? (containingIdx >= 0 ? result.Segments[containingIdx].Id : SelectedSegmentId);
 
-        _logger.Info($"Point In defini a {pos:hh\\:mm\\:ss\\.fff}");
+        _logger.Info($"Point In defini a {target:hh\\:mm\\:ss\\.fff}");
         Apply(result.Segments, nextSelection, clearMarkerSelection: true);
     }
 
-    [RelayCommand(CanExecute = nameof(CanSetInOut))]
-    private void SetOut()
+    public void SetOutAt(TimeSpan target)
     {
-        (TimeSpan pos, _) = GetPlaybackContext();
-        int previousCount = Segments.Count;
+        if (!HasMedia)
+        {
+            return;
+        }
 
-        SegmentEditResult result = SegmentEditor.SetOut(Segments, pos, _nextSegmentNumber);
+        int previousCount = Segments.Count;
+        SegmentEditResult result = SegmentEditor.SetOut(Segments, target, _nextSegmentNumber);
         if (!result.Success)
         {
             ShowTransientStatus(result.ErrorMessage ?? "Point de sortie invalide.");
@@ -322,12 +326,26 @@ public sealed partial class EditViewModel : ObservableObject, IDisposable
             _nextSegmentNumber++;
         }
 
-        int containingIdx = SegmentEditor.ContainingIndex(result.Segments, pos);
+        int containingIdx = SegmentEditor.ContainingIndex(result.Segments, target);
         Guid? nextSelection = result.CreatedSegmentId
             ?? (containingIdx >= 0 ? result.Segments[containingIdx].Id : SelectedSegmentId);
 
-        _logger.Info($"Point Out defini a {pos:hh\\:mm\\:ss\\.fff}");
+        _logger.Info($"Point Out defini a {target:hh\\:mm\\:ss\\.fff}");
         Apply(result.Segments, nextSelection, clearMarkerSelection: true);
+    }
+
+    [RelayCommand(CanExecute = nameof(CanSetInOut))]
+    private void SetIn()
+    {
+        (TimeSpan pos, _) = GetPlaybackContext();
+        SetInAt(pos);
+    }
+
+    [RelayCommand(CanExecute = nameof(CanSetInOut))]
+    private void SetOut()
+    {
+        (TimeSpan pos, _) = GetPlaybackContext();
+        SetOutAt(pos);
     }
 
     private bool CanSetInOut() => HasMedia;

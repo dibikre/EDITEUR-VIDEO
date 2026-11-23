@@ -28,6 +28,7 @@ public sealed class TimelineControl : Control
     private const double MinMinorTickSpacingPx = 8.0;
     private const double MarkerHitHalfWidthPx = 6.0;
     private const double MarkerDragThresholdPx = 3.0;
+    private const double PlayheadDragThresholdPx = 4.0;
     private const double MaxSnapToleranceSeconds = 0.5;
     private const double SnapTolerancePx = 8.0;
     private const long FollowSuspendDurationMs = 3000;
@@ -90,6 +91,8 @@ public sealed class TimelineControl : Control
     // Etat d'interaction souris / suivi
     private IPointer? _capturedPointer;
     private bool _isDragging;
+    private double _playheadDragStartX;
+    private bool _hasPlayheadDragMoved;
     private bool _isDraggingMarker;
     private bool _hasMarkerDragMoved;
     private int _dragMarkerIndex = -1;
@@ -256,6 +259,8 @@ public sealed class TimelineControl : Control
 
     public event EventHandler<TimeSpan>? SeekRequested;
     public event EventHandler<TimeSpan>? SeekCompleted;
+    public event EventHandler<TimeSpan>? SetInRequested;
+    public event EventHandler<TimeSpan>? SetOutRequested;
     public event EventHandler? ViewportChanged;
     public event EventHandler<Guid?>? SegmentSelectionRequested;
     public event EventHandler<int?>? MarkerSelectionRequested;
@@ -485,6 +490,7 @@ public sealed class TimelineControl : Control
         {
             _edgeScrollTimer.Stop();
             _isDragging = false;
+            _hasPlayheadDragMoved = false;
             ReleasePointerCapture();
             _hoverPopup.Hide();
             InvalidateVisual();
@@ -1049,13 +1055,29 @@ public sealed class TimelineControl : Control
         }
 
         PointerPoint pointerPoint = e.GetCurrentPoint(this);
+        Point pos = pointerPoint.Position;
+        _lastKeyModifiers = e.KeyModifiers;
+
+        if (pointerPoint.Properties.IsRightButtonPressed)
+        {
+            MarkerSelectionRequested?.Invoke(this, null);
+            TimeSpan outTime = SnapTimeToKeyframesIfEnabled(XToTime(pos.X), _lastKeyModifiers);
+            _isHovering = true;
+            _hoverX = pos.X;
+            _dragPositionSeconds = outTime.TotalSeconds;
+            InvalidateVisual();
+            UpdateHoverPopup(pos, outTime);
+
+            SeekCompleted?.Invoke(this, outTime);
+            SetOutRequested?.Invoke(this, outTime);
+            e.Handled = true;
+            return;
+        }
+
         if (!pointerPoint.Properties.IsLeftButtonPressed)
         {
             return;
         }
-
-        Point pos = pointerPoint.Position;
-        _lastKeyModifiers = e.KeyModifiers;
 
         // 1. Priorite au hit-test des marqueurs
         int hitMarker = HitTestMarker(pos.X, pos.Y);
@@ -1082,18 +1104,10 @@ public sealed class TimelineControl : Control
 
         TimeSpan target = XToTime(pos.X);
 
-        // 2. Bande segments : selectionner le segment clique
-        if (pos.Y >= SegmentsBandTop && Segments is { Count: > 0 } segmentList)
-        {
-            int segIdx = SegmentEditor.ContainingIndex(segmentList, target);
-            if (segIdx >= 0)
-            {
-                SegmentSelectionRequested?.Invoke(this, segmentList[segIdx].Id);
-            }
-        }
-
-        // 3. Regle / filmstrip / bande segments : deplacer le playhead
+        // 2. Clic / glisser sur la timeline (clic simple -> debut du segment ou selection, glisser -> scrub)
         _isDragging = true;
+        _playheadDragStartX = pos.X;
+        _hasPlayheadDragMoved = false;
         _isHovering = true;
         _hoverX = pos.X;
         _lastDragX = pos.X;
@@ -1153,6 +1167,11 @@ public sealed class TimelineControl : Control
         if (_isDragging)
         {
             _lastDragX = pos.X;
+            if (!_hasPlayheadDragMoved && Math.Abs(pos.X - _playheadDragStartX) >= PlayheadDragThresholdPx)
+            {
+                _hasPlayheadDragMoved = true;
+            }
+
             _dragPositionSeconds = hoverTime.TotalSeconds;
             UpdateEdgeScrollTimer(pos.X);
             SeekRequested?.Invoke(this, hoverTime);
@@ -1223,12 +1242,37 @@ public sealed class TimelineControl : Control
         _edgeScrollTimer.Stop();
         Point pos = e.GetPosition(this);
         TimeSpan finalSeek = XToTime(pos.X);
+        bool dragged = _hasPlayheadDragMoved;
 
         _isDragging = false;
+        _hasPlayheadDragMoved = false;
         _dragPositionSeconds = finalSeek.TotalSeconds;
         ReleasePointerCapture();
 
-        SeekCompleted?.Invoke(this, finalSeek);
+        if (!dragged)
+        {
+            if (pos.Y >= SegmentsBandTop && Segments is { Count: > 1 } segmentList)
+            {
+                int segIdx = SegmentEditor.ContainingIndex(segmentList, finalSeek);
+                if (segIdx >= 0)
+                {
+                    SegmentSelectionRequested?.Invoke(this, segmentList[segIdx].Id);
+                }
+
+                SeekCompleted?.Invoke(this, finalSeek);
+            }
+            else
+            {
+                finalSeek = SnapTimeToKeyframesIfEnabled(finalSeek, _lastKeyModifiers);
+                _dragPositionSeconds = finalSeek.TotalSeconds;
+                SeekCompleted?.Invoke(this, finalSeek);
+                SetInRequested?.Invoke(this, finalSeek);
+            }
+        }
+        else
+        {
+            SeekCompleted?.Invoke(this, finalSeek);
+        }
 
         if (!IsPointerOver)
         {
@@ -1288,6 +1332,7 @@ public sealed class TimelineControl : Control
         {
             _edgeScrollTimer.Stop();
             _isDragging = false;
+            _hasPlayheadDragMoved = false;
             if (!IsPointerOver)
             {
                 _isHovering = false;
@@ -1355,14 +1400,9 @@ public sealed class TimelineControl : Control
         }
     }
 
-    private TimeSpan ComputeSnappedAndClampedMarkerTime(double mouseX, KeyModifiers modifiers)
+    private TimeSpan SnapTimeToKeyframesIfEnabled(TimeSpan rawTime, KeyModifiers modifiers)
     {
-        if (Segments is not { Count: > 1 } segments || _dragMarkerIndex < 0 || _dragMarkerIndex >= segments.Count - 1)
-        {
-            return TimeSpan.Zero;
-        }
-
-        double rawSec = XToTime(mouseX).TotalSeconds;
+        double rawSec = rawTime.TotalSeconds;
         bool altHeld = (modifiers & KeyModifiers.Alt) != 0;
         if (SnapToKeyframes && !altHeld && Keyframes is { Count: > 0 } kfs && PixelsPerSecond > 0)
         {
@@ -1370,7 +1410,18 @@ public sealed class TimelineControl : Control
             rawSec = KeyframeSnapper.Snap(rawSec, kfs, tolerance);
         }
 
-        return SegmentEditor.ClampBoundary(segments, _dragMarkerIndex, TimeSpan.FromSeconds(rawSec));
+        return TimeSpan.FromSeconds(Math.Clamp(rawSec, 0.0, GetTotalSeconds()));
+    }
+
+    private TimeSpan ComputeSnappedAndClampedMarkerTime(double mouseX, KeyModifiers modifiers)
+    {
+        if (Segments is not { Count: > 1 } segments || _dragMarkerIndex < 0 || _dragMarkerIndex >= segments.Count - 1)
+        {
+            return TimeSpan.Zero;
+        }
+
+        TimeSpan snapped = SnapTimeToKeyframesIfEnabled(XToTime(mouseX), modifiers);
+        return SegmentEditor.ClampBoundary(segments, _dragMarkerIndex, snapped);
     }
 
     private void ResetMarkerDragState()

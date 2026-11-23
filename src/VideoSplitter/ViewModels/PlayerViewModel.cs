@@ -37,7 +37,10 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(MediaSummary))]
+    [NotifyPropertyChangedFor(nameof(IsPortraitVideo))]
     private MediaInfo? _mediaInfo;
+
+    public bool IsPortraitVideo => MediaInfo is { Width: > 0, Height: > 0 } info && info.Width < info.Height;
 
     public string MediaSummary => MediaInfo is { } info
         ? $"{info.Width}x{info.Height} · {info.Fps:F2} fps · {info.VideoCodec}"

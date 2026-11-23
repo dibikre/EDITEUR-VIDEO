@@ -1,7 +1,9 @@
+using System.ComponentModel;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
@@ -26,6 +28,7 @@ public partial class MainWindow : Window
     private SegmentRowViewModel? _mouseDownAlreadySelectedRow;
     private bool _isClosingAfterExportCancel;
     private bool _isClosingPromptOpen;
+    private bool _isPortraitLayout;
 
     public MainWindow()
     {
@@ -47,6 +50,7 @@ public partial class MainWindow : Window
         Opened += OnWindowOpened;
         Closed += OnWindowClosed;
         _viewModel.Player.ErrorOccurred += OnPlayerErrorOccurred;
+        _viewModel.Player.PropertyChanged += OnPlayerPropertyChanged;
 
         AddHandler(DragDrop.DragOverEvent, OnWindowDragOver, RoutingStrategies.Tunnel);
         AddHandler(DragDrop.DropEvent, OnWindowDrop, RoutingStrategies.Tunnel);
@@ -133,6 +137,8 @@ public partial class MainWindow : Window
             LecteurVideoView.MediaPlayer = _mediaPlayer;
             _logger.Info("MediaPlayer LibVLC associe a VideoView (Avalonia).");
         }
+
+        ApplyResponsiveLayout(_viewModel.Player.IsPortraitVideo);
     }
 
     protected override void OnClosing(WindowClosingEventArgs e)
@@ -181,6 +187,7 @@ public partial class MainWindow : Window
         Opened -= OnWindowOpened;
         Closed -= OnWindowClosed;
         _viewModel.Player.ErrorOccurred -= OnPlayerErrorOccurred;
+        _viewModel.Player.PropertyChanged -= OnPlayerPropertyChanged;
         _viewModel.Player.PickVideoFileAsync = null;
         _viewModel.ConfirmAbortExportForOpenAsync = null;
 
@@ -201,6 +208,199 @@ public partial class MainWindow : Window
         _ = ShowDialogMessageAsync("VideoSplitter — Erreur", message, isConfirmation: false);
     }
 
+    private void OnPlayerPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(PlayerViewModel.IsPortraitVideo))
+        {
+            ApplyResponsiveLayout(_viewModel.Player.IsPortraitVideo);
+        }
+    }
+
+    private void ApplyResponsiveLayout(bool isPortrait)
+    {
+        if (_isPortraitLayout == isPortrait)
+        {
+            return;
+        }
+
+        _isPortraitLayout = isPortrait;
+
+        if (isPortrait)
+        {
+            MainWorkspaceGrid.ColumnDefinitions = ColumnDefinitions.Parse("*,500");
+            MainWorkspaceGrid.RowDefinitions = RowDefinitions.Parse("*,Auto");
+
+            Grid.SetRow(VideoHostBorder, 0);
+            Grid.SetColumn(VideoHostBorder, 0);
+            Grid.SetColumnSpan(VideoHostBorder, 1);
+
+            Grid.SetRow(TimelineBorder, 1);
+            Grid.SetColumn(TimelineBorder, 0);
+            Grid.SetColumnSpan(TimelineBorder, 2);
+            TimelineBorder.BorderThickness = new Thickness(0);
+
+            BottomPanelsBorder.IsVisible = false;
+            PortraitRightHostBorder.IsVisible = true;
+            Grid.SetRow(PortraitRightHostBorder, 0);
+            Grid.SetColumn(PortraitRightHostBorder, 1);
+
+            DetachFromPanelParent(PlaybackControlsBorder);
+            DetachFromPanelParent(SegmentsCardBorder);
+            DetachFromPanelParent(ExportOptionsBorder);
+            DetachFromPanelParent(ExportProgressBorder);
+
+            ConfigurePlaybackHeaderForPortrait(true);
+            ConfigurePanelCardsForPortrait(true);
+
+            Grid.SetRow(PlaybackControlsBorder, 0);
+            Grid.SetColumn(PlaybackControlsBorder, 0);
+            Grid.SetColumnSpan(PlaybackControlsBorder, 1);
+
+            Grid.SetRow(SegmentsCardBorder, 0);
+            Grid.SetColumn(SegmentsCardBorder, 0);
+
+            Grid.SetRow(ExportOptionsBorder, 0);
+            Grid.SetColumn(ExportOptionsBorder, 0);
+
+            Grid.SetRow(ExportProgressBorder, 0);
+            Grid.SetColumn(ExportProgressBorder, 0);
+
+            PortraitRightStack.Children.Add(PlaybackControlsBorder);
+            PortraitRightStack.Children.Add(SegmentsCardBorder);
+            PortraitRightStack.Children.Add(ExportOptionsBorder);
+            PortraitRightStack.Children.Add(ExportProgressBorder);
+        }
+        else
+        {
+            MainWorkspaceGrid.ColumnDefinitions = ColumnDefinitions.Parse("*");
+            MainWorkspaceGrid.RowDefinitions = RowDefinitions.Parse("*,Auto,Auto,Auto");
+
+            Grid.SetRow(VideoHostBorder, 0);
+            Grid.SetColumn(VideoHostBorder, 0);
+            Grid.SetColumnSpan(VideoHostBorder, 1);
+
+            Grid.SetRow(TimelineBorder, 2);
+            Grid.SetColumn(TimelineBorder, 0);
+            Grid.SetColumnSpan(TimelineBorder, 1);
+            TimelineBorder.BorderThickness = new Thickness(0, 0, 0, 1);
+
+            PortraitRightHostBorder.IsVisible = false;
+            BottomPanelsBorder.IsVisible = true;
+
+            DetachFromPanelParent(PlaybackControlsBorder);
+            DetachFromPanelParent(SegmentsCardBorder);
+            DetachFromPanelParent(ExportOptionsBorder);
+            DetachFromPanelParent(ExportProgressBorder);
+
+            ConfigurePlaybackHeaderForPortrait(false);
+            ConfigurePanelCardsForPortrait(false);
+
+            Grid.SetRow(PlaybackControlsBorder, 1);
+            Grid.SetColumn(PlaybackControlsBorder, 0);
+            Grid.SetColumnSpan(PlaybackControlsBorder, 1);
+            MainWorkspaceGrid.Children.Add(PlaybackControlsBorder);
+
+            Grid.SetRow(SegmentsCardBorder, 0);
+            Grid.SetColumn(SegmentsCardBorder, 0);
+            BottomPanelsGrid.Children.Add(SegmentsCardBorder);
+
+            Grid.SetRow(ExportOptionsBorder, 0);
+            Grid.SetColumn(ExportOptionsBorder, 2);
+            BottomPanelsGrid.Children.Add(ExportOptionsBorder);
+
+            Grid.SetRow(ExportProgressBorder, 0);
+            Grid.SetColumn(ExportProgressBorder, 4);
+            BottomPanelsGrid.Children.Add(ExportProgressBorder);
+        }
+    }
+
+    private void ConfigurePlaybackHeaderForPortrait(bool isPortrait)
+    {
+        if (isPortrait)
+        {
+            PlaybackHeaderGrid.ColumnDefinitions = ColumnDefinitions.Parse("*");
+            PlaybackHeaderGrid.RowDefinitions = RowDefinitions.Parse("Auto,Auto");
+
+            Grid.SetRow(TransportTimeStack, 0);
+            Grid.SetColumn(TransportTimeStack, 0);
+
+            Grid.SetRow(AudioSpeedStack, 1);
+            Grid.SetColumn(AudioSpeedStack, 0);
+            AudioSpeedStack.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left;
+            AudioSpeedStack.Margin = new Thickness(0, 6, 0, 0);
+        }
+        else
+        {
+            PlaybackHeaderGrid.ColumnDefinitions = ColumnDefinitions.Parse("*,Auto");
+            PlaybackHeaderGrid.RowDefinitions = RowDefinitions.Parse("Auto");
+
+            Grid.SetRow(TransportTimeStack, 0);
+            Grid.SetColumn(TransportTimeStack, 0);
+
+            Grid.SetRow(AudioSpeedStack, 0);
+            Grid.SetColumn(AudioSpeedStack, 1);
+            AudioSpeedStack.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right;
+            AudioSpeedStack.Margin = new Thickness(0);
+        }
+    }
+
+    private void ConfigurePanelCardsForPortrait(bool isPortrait)
+    {
+        IBrush? windowBg = TryResolveBrush("WindowBackgroundBrush");
+        IBrush? surfaceBg = TryResolveBrush("SurfaceBrush");
+        IBrush? borderBrush = TryResolveBrush("BorderBrush");
+
+        if (isPortrait)
+        {
+            PlaybackControlsBorder.Background = windowBg ?? surfaceBg;
+            PlaybackControlsBorder.BorderBrush = borderBrush;
+            PlaybackControlsBorder.BorderThickness = new Thickness(1);
+            PlaybackControlsBorder.CornerRadius = new CornerRadius(4);
+            PlaybackControlsBorder.Padding = new Thickness(10);
+
+            SegmentsCardBorder.Background = windowBg;
+            SegmentsCardBorder.BorderBrush = borderBrush;
+            SegmentsCardBorder.BorderThickness = new Thickness(1);
+            SegmentsCardBorder.CornerRadius = new CornerRadius(4);
+            SegmentsCardBorder.Padding = new Thickness(10);
+            SegmentsCardBorder.Height = 165;
+
+            ExportProgressBorder.Height = 180;
+        }
+        else
+        {
+            PlaybackControlsBorder.Background = surfaceBg;
+            PlaybackControlsBorder.BorderBrush = borderBrush;
+            PlaybackControlsBorder.BorderThickness = new Thickness(0, 0, 0, 1);
+            PlaybackControlsBorder.CornerRadius = new CornerRadius(0);
+            PlaybackControlsBorder.Padding = new Thickness(12, 8);
+
+            SegmentsCardBorder.Background = Brushes.Transparent;
+            SegmentsCardBorder.BorderBrush = null;
+            SegmentsCardBorder.BorderThickness = new Thickness(0);
+            SegmentsCardBorder.CornerRadius = new CornerRadius(0);
+            SegmentsCardBorder.Padding = new Thickness(0);
+            SegmentsCardBorder.Height = double.NaN;
+
+            ExportProgressBorder.Height = double.NaN;
+        }
+    }
+
+    private IBrush? TryResolveBrush(string resourceKey)
+    {
+        return this.TryFindResource(resourceKey, ActualThemeVariant, out object? found) && found is IBrush brush
+            ? brush
+            : null;
+    }
+
+    private static void DetachFromPanelParent(Control control)
+    {
+        if (control.Parent is Panel parent)
+        {
+            parent.Children.Remove(control);
+        }
+    }
+
     private void OnSeekBarSeekRequested(object? sender, TimeSpan target)
     {
         _viewModel.Player.SeekFromBar(target, isFinal: false);
@@ -209,6 +409,16 @@ public partial class MainWindow : Window
     private void OnSeekBarSeekCompleted(object? sender, TimeSpan target)
     {
         _viewModel.Player.SeekFromBar(target, isFinal: true);
+    }
+
+    private void OnTimelineSetInRequested(object? sender, TimeSpan target)
+    {
+        _viewModel.Edit.SetInAt(target);
+    }
+
+    private void OnTimelineSetOutRequested(object? sender, TimeSpan target)
+    {
+        _viewModel.Edit.SetOutAt(target);
     }
 
     private void OnTimelineSegmentSelectionRequested(object? sender, Guid? segmentId)

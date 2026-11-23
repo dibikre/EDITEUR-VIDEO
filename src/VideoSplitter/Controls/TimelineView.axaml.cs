@@ -83,6 +83,8 @@ public partial class TimelineView : UserControl
 
     public event EventHandler<TimeSpan>? SeekRequested;
     public event EventHandler<TimeSpan>? SeekCompleted;
+    public event EventHandler<TimeSpan>? SetInRequested;
+    public event EventHandler<TimeSpan>? SetOutRequested;
     public event EventHandler<Guid?>? SegmentSelectionRequested;
     public event EventHandler<int?>? MarkerSelectionRequested;
     public event EventHandler<(int Index, TimeSpan Time)>? BoundaryDragPreview;
@@ -133,6 +135,16 @@ public partial class TimelineView : UserControl
     private void OnTimelineSeekCompleted(object? sender, TimeSpan target)
     {
         SeekCompleted?.Invoke(this, target);
+    }
+
+    private void OnTimelineSetInRequested(object? sender, TimeSpan target)
+    {
+        SetInRequested?.Invoke(this, target);
+    }
+
+    private void OnTimelineSetOutRequested(object? sender, TimeSpan target)
+    {
+        SetOutRequested?.Invoke(this, target);
     }
 
     private void OnTimelineSegmentSelectionRequested(object? sender, Guid? segmentId)
