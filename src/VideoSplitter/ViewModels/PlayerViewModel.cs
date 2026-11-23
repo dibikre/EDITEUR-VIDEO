@@ -90,6 +90,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     private string _thumbnailStatus = "En attente";
 
     public event EventHandler<string>? ErrorOccurred;
+    public Func<Task<bool>>? BeforeOpenConfirmAsync { get; set; }
 
     public PlayerViewModel(
         VlcMediaPlayer mediaPlayer,
@@ -162,6 +163,15 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
     public async Task OpenAsync(string path)
     {
+        if (BeforeOpenConfirmAsync is not null)
+        {
+            bool shouldContinue = await BeforeOpenConfirmAsync.Invoke();
+            if (!shouldContinue)
+            {
+                return;
+            }
+        }
+
         _openCts?.Cancel();
         _openCts?.Dispose();
         _openCts = new CancellationTokenSource();

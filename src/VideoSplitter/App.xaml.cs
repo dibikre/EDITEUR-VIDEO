@@ -42,6 +42,9 @@ public partial class App : Application
 
             ICacheService cacheService = _serviceProvider.GetRequiredService<ICacheService>();
             _ = cacheService.CleanupAsync(TimeSpan.FromDays(30), CancellationToken.None);
+
+            ExportViewModel exportViewModel = _serviceProvider.GetRequiredService<ExportViewModel>();
+            _ = exportViewModel.DetectEncodersInBackgroundAsync();
         }
         catch (Exception ex)
         {
@@ -61,10 +64,13 @@ public partial class App : Application
         services.AddSingleton<IFfmpegService, FfmpegService>();
         services.AddSingleton<ICacheService, CacheService>();
         services.AddSingleton<IThumbnailService, ThumbnailService>();
+        services.AddSingleton<IExportService, ExportService>();
+        services.AddSingleton<IExportQueue, ExportQueue>();
 
         services.AddSingleton<PlayerViewModel>();
         services.AddSingleton<TimelineViewModel>();
         services.AddSingleton<EditViewModel>();
+        services.AddSingleton<ExportViewModel>();
         services.AddSingleton<MainViewModel>();
         services.AddTransient<MainWindow>();
     }

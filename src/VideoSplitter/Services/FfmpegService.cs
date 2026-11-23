@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using CliWrap;
 using CliWrap.Buffered;
+using VideoSplitter.Export;
 using VideoSplitter.Models;
 
 namespace VideoSplitter.Services;
@@ -13,16 +14,20 @@ public sealed class FfmpegService : IFfmpegService
 {
     private const int MaxStderrLines = 20;
     private const string KeyframesFileName = "keyframes.txt";
+    private static readonly TimeSpan EncoderTestTimeout = TimeSpan.FromSeconds(10);
 
     private readonly ICacheService _cacheService;
     private readonly IAppLogger _logger;
     private readonly string _ffprobePath;
+    private readonly string _ffmpegPath;
 
     public FfmpegService(ICacheService cacheService, IAppLogger logger)
     {
         _cacheService = cacheService;
         _logger = logger;
-        _ffprobePath = Path.Combine(AppContext.BaseDirectory, "Assets", "ffmpeg", "ffprobe.exe");
+        string ffmpegDir = Path.Combine(AppContext.BaseDirectory, "Assets", "ffmpeg");
+        _ffprobePath = Path.Combine(ffmpegDir, "ffprobe.exe");
+        _ffmpegPath = Path.Combine(ffmpegDir, "ffmpeg.exe");
     }
 
     public async Task<MediaInfo> ProbeAsync(string path, CancellationToken ct)
@@ -214,6 +219,140 @@ public sealed class FfmpegService : IFfmpegService
         }
 
         return sortedUnique;
+    }
+
+    public async Task<EncoderCapabilities> DetectEncodersAsync(CancellationToken ct)
+    {
+        var available = new HashSet<EncoderKind> { EncoderKind.Cpu };
+        if (!File.Exists(_ffmpegPath))
+        {
+            _logger.Warn($"Détection des encodeurs ignorée : ffmpeg.exe introuvable ({_ffmpegPath}).");
+            return new EncoderCapabilities(available);
+        }
+
+        _logger.Info("Détection des encodeurs vidéo FFmpeg...");
+
+        string encodersOutput;
+        try
+        {
+            using var listCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            listCts.CancelAfter(EncoderTestTimeout);
+
+            BufferedCommandResult listResult = await Cli.Wrap(_ffmpegPath)
+                .WithArguments(["-hide_banner", "-encoders"])
+                .WithValidation(CommandResultValidation.None)
+                .ExecuteBufferedAsync(listCts.Token, CancellationToken.None)
+                .ConfigureAwait(false);
+
+            if (listResult.ExitCode != 0)
+            {
+                _logger.Warn($"ffmpeg -encoders a retourné le code {listResult.ExitCode} : {listResult.StandardError.Trim()}");
+                return new EncoderCapabilities(available);
+            }
+
+            encodersOutput = listResult.StandardOutput;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"Échec du listage des encodeurs FFmpeg : {ex.Message}");
+            return new EncoderCapabilities(available);
+        }
+
+        (EncoderKind Kind, string CodecName)[] candidates =
+        [
+            (EncoderKind.Nvenc, "h264_nvenc"),
+            (EncoderKind.Qsv, "h264_qsv"),
+            (EncoderKind.Amf, "h264_amf")
+        ];
+
+        foreach ((EncoderKind kind, string codecName) in candidates)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!encodersOutput.Contains(codecName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            bool works = await TestEncoderAsync(kind, ct).ConfigureAwait(false);
+            if (works)
+            {
+                available.Add(kind);
+            }
+        }
+
+        _logger.Info($"Encodeurs disponibles : {string.Join(", ", available)}");
+        return new EncoderCapabilities(available);
+    }
+
+    private async Task<bool> TestEncoderAsync(EncoderKind encoder, CancellationToken ct)
+    {
+        List<string> args = FfmpegArgsBuilder.BuildEncoderTestArgs(encoder);
+        var stderrLines = new Queue<string>(MaxStderrLines + 1);
+        object stderrLock = new();
+
+        void HandleStderrLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                return;
+            }
+
+            lock (stderrLock)
+            {
+                if (stderrLines.Count >= MaxStderrLines)
+                {
+                    stderrLines.Dequeue();
+                }
+
+                stderrLines.Enqueue(line);
+            }
+        }
+
+        try
+        {
+            using var testCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            testCts.CancelAfter(EncoderTestTimeout);
+
+            CommandResult result = await Cli.Wrap(_ffmpegPath)
+                .WithArguments(args)
+                .WithValidation(CommandResultValidation.None)
+                .WithStandardErrorPipe(PipeTarget.ToDelegate(HandleStderrLine))
+                .ExecuteAsync(testCts.Token, CancellationToken.None)
+                .ConfigureAwait(false);
+
+            if (result.ExitCode == 0)
+            {
+                _logger.Info($"Test encodeur {encoder} réussi.");
+                return true;
+            }
+
+            string stderrTail;
+            lock (stderrLock)
+            {
+                stderrTail = string.Join(" | ", stderrLines);
+            }
+
+            _logger.Info($"Encodeur {encoder} indisponible (code {result.ExitCode}) : {stderrTail}");
+            return false;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.Warn($"Test de l'encodeur {encoder} expiré après {EncoderTestTimeout.TotalSeconds:0} s.");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"Échec du test de l'encodeur {encoder} : {ex.Message}");
+            return false;
+        }
     }
 
     private void EnsureFfprobeAndInput(string path)

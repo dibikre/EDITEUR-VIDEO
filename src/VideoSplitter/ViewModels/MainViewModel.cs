@@ -12,6 +12,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public PlayerViewModel Player { get; }
     public TimelineViewModel Timeline { get; }
     public EditViewModel Edit { get; }
+    public ExportViewModel Export { get; }
+
+    public Func<bool>? ConfirmAbortExportForOpen { get; set; }
 
     [ObservableProperty]
     private string _title = "VideoSplitter";
@@ -20,19 +23,40 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         PlayerViewModel player,
         TimelineViewModel timeline,
         EditViewModel edit,
+        ExportViewModel export,
         IAppLogger logger)
     {
         Player = player;
         Timeline = timeline;
         Edit = edit;
+        Export = export;
         _logger = logger;
 
         Edit.ConfigurePlaybackBridge(
             () => (Player.Position, Timeline.PixelsPerSecond),
             target => Player.SeekTo(target));
 
+        Player.BeforeOpenConfirmAsync = ConfirmAndAbortExportBeforeOpenAsync;
         Player.PropertyChanged += OnPlayerPropertyChanged;
+        Edit.PropertyChanged += OnEditPropertyChanged;
+
         _logger.Info("MainViewModel initialise.");
+    }
+
+    private async Task<bool> ConfirmAndAbortExportBeforeOpenAsync()
+    {
+        if (!Export.IsExporting)
+        {
+            return true;
+        }
+
+        if (ConfirmAbortExportForOpen is null || !ConfirmAbortExportForOpen.Invoke())
+        {
+            return false;
+        }
+
+        await Export.CancelAndWaitAsync(TimeSpan.FromSeconds(5));
+        return true;
     }
 
     private void OnPlayerPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -48,12 +72,24 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             if (Player.MediaInfo is { } openedMedia)
             {
                 Edit.OnVideoOpened(openedMedia);
+                Export.OnVideoOpened(openedMedia);
             }
+        }
+    }
+
+    private void OnEditPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(EditViewModel.Segments))
+        {
+            Export.NotifySegmentsChanged();
+            Export.ClearTransientErrorState();
         }
     }
 
     public void Dispose()
     {
         Player.PropertyChanged -= OnPlayerPropertyChanged;
+        Edit.PropertyChanged -= OnEditPropertyChanged;
+        Player.BeforeOpenConfirmAsync = null;
     }
 }

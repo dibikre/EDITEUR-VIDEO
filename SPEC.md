@@ -151,25 +151,32 @@ Deux modes :
 
 **Rapide (sans perte, défaut)**
 ```
-ffmpeg -hide_banner -y -ss <début> -i "<in>" -t <durée> -c copy -map 0 -avoid_negative_ts make_zero
-       -progress pipe:1 -nostats "<out>"
+ffmpeg -hide_banner -nostdin -y -ss <début> -i "<in>" -t <durée>
+       -map 0:v:0 -map 0:a? -sn -dn -map_chapters -1
+       -c copy -avoid_negative_ts make_zero [-movflags +faststart]
+       -progress pipe:1 -nostats "<out.part.ext>"
 ```
-- Quasi instantané (limité par le disque). La coupe tombe sur la keyframe précédente : afficher un avertissement si le point de coupe n'est pas sur une keyframe, avec proposition de basculer en mode Précis pour ce segment.
+- Quasi instantané (limité par le disque). La coupe tombe sur la keyframe précédente : afficher un avertissement si le point de coupe n'est pas sur une keyframe, avec proposition de basculer en mode Précis (pour ces segments ou pour tout l'export).
 
 **Précis (ré-encodage, précis à l'image)**
 ```
-ffmpeg -hide_banner -y -ss <début> -i "<in>" -t <durée>
-       -c:v <encodeur> <qualité> -c:a aac -b:a 192k -map 0:v:0 -map 0:a? 
-       -progress pipe:1 -nostats "<out>"
+ffmpeg -hide_banner -nostdin -y -ss <début> -i "<in>" -t <durée>
+       -map 0:v:0 -map 0:a? -sn -dn -map_chapters -1
+       -pix_fmt yuv420p -c:v <encodeur> <options_qualité>
+       -c:a aac -b:a 192k [-movflags +faststart]
+       -progress pipe:1 -nostats "<out.part.ext>"
 ```
-- Encodeur auto : détecter au démarrage (en arrière-plan) les encodeurs matériels disponibles via `ffmpeg -encoders`, puis **tester réellement** (encodage d'1 s de test) `h264_nvenc`, `h264_qsv`, `h264_amf`. Repli automatique sur `libx264 -preset veryfast -crf 18` en cas d'échec.
+- Encodeurs supportés : CPU (`libx264`), NVENC (`h264_nvenc`), QSV (`h264_qsv`), AMF (`h264_amf`). Détection séquentielle au démarrage (en arrière-plan) via `ffmpeg -hide_banner -encoders` puis test réel d'1 s (`lavfi testsrc2`) avec timeout de 10 s. Repli automatique sur CPU (`libx264`) si le mode `Auto` a choisi un encodeur matériel qui échoue au runtime.
 
 Commun aux deux modes :
-- Progression réelle via `-progress pipe:1` (lire `out_time_us`/`out_time_ms` et comparer à la durée du segment). **Ne pas parser stderr.**
-- File d'attente (maximum 2 jobs en parallèle), annulation propre (tuer le processus et supprimer le fichier partiel).
-- Ne jamais écraser un fichier existant sans demander (proposer : écraser / renommer / ignorer).
-- Écrire d'abord dans un fichier temporaire `.part` puis renommer à la fin.
-- Rapport final : nombre de segments exportés, erreurs éventuelles.
+- Sélection de pistes fixe : première piste vidéo (`0:v:0`) et toutes les pistes audio (`0:a?`) ; sous-titres (`-sn`), pistes de données (`-dn`) et chapitres (`-map_chapters -1`) exclus.
+- `-movflags +faststart` ajouté pour les conteneurs `.mp4`, `.m4v` et `.mov`.
+- Progression réelle via `-progress pipe:1` (`out_time_us=` et `progress=end`). **Ne pas parser stderr pour la progression.**
+- Parallélisme : 2 jobs maximum en mode Rapide et en mode Précis matériel ; 1 seul job en mode Précis CPU (`libx264`).
+- Annulation propre (tuer le processus et supprimer le fichier `.part`).
+- Ne jamais écraser un fichier existant sans demander (proposer : remplacer tout / renommer automatiquement / ignorer / annuler).
+- Écrire d'abord dans `<nom>.part<ext>` puis renommer en nom final à la fin.
+- Rapport final : nombre de segments exportés, erreurs, ignorés et annulés.
 
 ---
 
@@ -185,13 +192,24 @@ public sealed record SpriteSet(
     string Directory, double IntervalSeconds, int ThumbWidth, int ThumbHeight,
     int Columns, int Rows, int Count, int SheetCount);
 
+public enum ExportMode { Fast, Precise }
+public enum EncoderKind { Cpu, Nvenc, Qsv, Amf }
+public enum EncoderSelection { Auto, Cpu, Nvenc, Qsv, Amf }
+public enum ConflictPolicy { Overwrite, AutoRename, Skip }
+public enum ExportOutcome { Success, Failed, Cancelled, Skipped }
+
+public sealed record EncoderCapabilities(IReadOnlySet<EncoderKind> Available);
+
 public sealed record ExportJob(
-    string InputPath, Segment Segment, string OutputPath,
-    ExportMode Mode, string? Encoder, int Crf);
+    MediaInfo Media, Segment Segment, int Index, int Total,
+    string OutputPath, ExportMode Mode, EncoderKind Encoder, int Crf,
+    bool AllowCpuFallback = false, bool IsSkipped = false);
 
 public sealed record ExportProgress(Guid SegmentId, double Fraction, TimeSpan Elapsed);
 
-public enum ExportMode { Fast, Precise }
+public sealed record ExportResult(
+    ExportOutcome Outcome, string? ErrorMessage, string? TechnicalDetails,
+    string? FinalPath, EncoderKind? UsedEncoder, TimeSpan Elapsed);
 
 public interface IFfmpegService
 {
@@ -199,7 +217,7 @@ public interface IFfmpegService
     // Keyframes via : ffprobe -v error -select_streams v:0
     //   -show_entries packet=pts_time,flags -of csv=p=0 "<in>"   (lignes dont flags contient 'K')
     Task<IReadOnlyList<double>> GetKeyframesAsync(string path, MediaInfo media, CancellationToken ct);
-    Task<string?> DetectHardwareEncoderAsync(CancellationToken ct);
+    Task<EncoderCapabilities> DetectEncodersAsync(CancellationToken ct);
 }
 
 public interface IThumbnailService
@@ -209,7 +227,7 @@ public interface IThumbnailService
 
 public interface IExportService
 {
-    Task ExportAsync(ExportJob job, IProgress<ExportProgress> progress, CancellationToken ct);
+    Task<ExportResult> ExportAsync(ExportJob job, IProgress<ExportProgress> progress, CancellationToken ct);
 }
 
 public interface ICacheService
@@ -234,13 +252,14 @@ VideoSplitter/
     VideoSplitter.csproj
     App.xaml / App.xaml.cs            (composition root DI, Core.Initialize, thème)
     Assets/ffmpeg/                    (binaires, non versionnés)
-    Models/        MediaInfo, Segment, SpriteSet, ExportJob, ...
+    Models/        MediaInfo, Segment, SpriteSet, ExportModels
     Editing/       SegmentEditor, KeyframeSnapper, EditHistory
-    Services/      FfmpegService, ThumbnailService, ExportService, CacheService
+    Export/        FfmpegArgsBuilder, ExportPlanner, CutAccuracy
+    Services/      FfmpegService, ThumbnailService, ExportService, ExportQueue, CacheService
     ViewModels/    MainViewModel, PlayerViewModel, TimelineViewModel, EditViewModel, ExportViewModel
     Controls/      TimelineControl, TimelineView, SeekBar, ThumbnailHoverPopup
-    Converters/    TimeSpanToStringConverter, ...
-    Views/         MainWindow.xaml(.cs)
+    Converters/    TimeSpanToStringConverter, EnumBooleanConverter
+    Views/         MainWindow.xaml(.cs), ExportConflictDialog.xaml(.cs), FastCutWarningDialog.xaml(.cs)
     Themes/        Dark.xaml
 ```
 

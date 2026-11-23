@@ -1,9 +1,11 @@
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
+using VideoSplitter.Models;
 using VideoSplitter.Services;
 using VideoSplitter.ViewModels;
 using VlcMediaPlayer = LibVLCSharp.Shared.MediaPlayer;
@@ -16,6 +18,7 @@ public partial class MainWindow : Window
     private readonly VlcMediaPlayer _mediaPlayer;
     private readonly IAppLogger _logger;
     private SegmentRowViewModel? _mouseDownAlreadySelectedRow;
+    private bool _isClosingAfterExportCancel;
 
     public MainWindow(MainViewModel viewModel, VlcMediaPlayer mediaPlayer, IAppLogger logger)
     {
@@ -26,9 +29,65 @@ public partial class MainWindow : Window
         _mediaPlayer = mediaPlayer;
         _logger = logger;
 
+        ConfigureExportBridges();
+
         Loaded += OnLoaded;
         Closed += OnClosed;
         _viewModel.Player.ErrorOccurred += OnPlayerErrorOccurred;
+    }
+
+    private void ConfigureExportBridges()
+    {
+        _viewModel.ConfirmAbortExportForOpen = () =>
+        {
+            MessageBoxResult answer = MessageBox.Show(
+                this,
+                "Un export est en cours. L'annuler et ouvrir la nouvelle vidéo ?",
+                "VideoSplitter — Confirmation",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            return answer == MessageBoxResult.Yes;
+        };
+
+        _viewModel.Export.ConfigureBridges(
+            sourceProvider: () => (_viewModel.Player.MediaInfo, _viewModel.Edit.Segments, _viewModel.Edit.Keyframes),
+            fastCutWarningPrompt: (outOfKeyframeCount, keyframesUnavailable) =>
+            {
+                var dialog = new FastCutWarningDialog(outOfKeyframeCount, keyframesUnavailable)
+                {
+                    Owner = this
+                };
+                dialog.ShowDialog();
+                return dialog.Choice;
+            },
+            conflictPrompt: conflictingPaths =>
+            {
+                var dialog = new ExportConflictDialog(conflictingPaths)
+                {
+                    Owner = this
+                };
+                dialog.ShowDialog();
+                return dialog.SelectedPolicy;
+            },
+            confirmContinuePrompt: message =>
+            {
+                MessageBoxResult answer = MessageBox.Show(
+                    this,
+                    message,
+                    "VideoSplitter — Avertissement",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+                return answer == MessageBoxResult.Yes;
+            },
+            errorPrompt: message =>
+            {
+                MessageBox.Show(
+                    this,
+                    message,
+                    "VideoSplitter — Erreur d'export",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            });
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -40,11 +99,40 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnWindowClosing(object? sender, CancelEventArgs e)
+    {
+        if (_isClosingAfterExportCancel || !_viewModel.Export.IsExporting)
+        {
+            return;
+        }
+
+        MessageBoxResult answer = MessageBox.Show(
+            this,
+            "Un export est en cours. L'annuler et quitter l'application ?",
+            "VideoSplitter — Confirmation",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+
+        e.Cancel = true;
+        if (answer == MessageBoxResult.Yes)
+        {
+            _ = CancelExportAndCloseAsync();
+        }
+    }
+
+    private async Task CancelExportAndCloseAsync()
+    {
+        await _viewModel.Export.CancelAndWaitAsync(TimeSpan.FromSeconds(5));
+        _isClosingAfterExportCancel = true;
+        Close();
+    }
+
     private void OnClosed(object? sender, EventArgs e)
     {
         Loaded -= OnLoaded;
         Closed -= OnClosed;
         _viewModel.Player.ErrorOccurred -= OnPlayerErrorOccurred;
+        _viewModel.ConfirmAbortExportForOpen = null;
 
         // Detacher le lecteur avant la liberation du conteneur DI dans App.OnExit.
         LecteurVideoView.MediaPlayer = null;

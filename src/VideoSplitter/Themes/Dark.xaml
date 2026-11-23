@@ -619,6 +619,7 @@
     <!-- Pinceaux semantiques -->
     <SolidColorBrush x:Key="SuccessBrush" Color="#22C55E" />
     <SolidColorBrush x:Key="WarningBrush" Color="#F59E0B" />
+    <SolidColorBrush x:Key="DangerBrush" Color="#EF4444" />
 
     <!-- Style TextBox -->
     <Style TargetType="{x:Type TextBox}">

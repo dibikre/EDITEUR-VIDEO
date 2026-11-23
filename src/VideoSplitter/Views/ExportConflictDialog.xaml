@@ -1,0 +1,45 @@
+<Window x:Class="VideoSplitter.Views.ExportConflictDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource DarkWindowStyle}"
+        Title="VideoSplitter — Fichiers existants"
+        Width="560"
+        SizeToContent="Height"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+    <Border Background="{StaticResource SurfaceBrush}" Padding="18">
+        <StackPanel>
+            <TextBlock x:Name="HeaderTextBlock"
+                       TextWrapping="Wrap"
+                       FontSize="13.5"
+                       Margin="0,0,0,10" />
+
+            <ListBox x:Name="FilesListBox"
+                     MaxHeight="150"
+                     Background="{StaticResource WindowBackgroundBrush}"
+                     Foreground="{StaticResource TextSecondaryBrush}"
+                     BorderBrush="{StaticResource BorderBrush}"
+                     BorderThickness="1"
+                     Margin="0,0,0,16"
+                     Padding="4" />
+
+            <WrapPanel HorizontalAlignment="Right">
+                <Button Content="Remplacer tout"
+                        Click="OnOverwriteClick"
+                        Margin="0,0,8,4" />
+                <Button Content="Renommer automatiquement"
+                        Style="{StaticResource PrimaryButtonStyle}"
+                        Click="OnAutoRenameClick"
+                        Margin="0,0,8,4" />
+                <Button Content="Ignorer ceux qui existent"
+                        Click="OnSkipClick"
+                        Margin="0,0,8,4" />
+                <Button Content="Annuler"
+                        IsCancel="True"
+                        Click="OnCancelClick"
+                        Margin="0,0,0,4" />
+            </WrapPanel>
+        </StackPanel>
+    </Border>
+</Window>

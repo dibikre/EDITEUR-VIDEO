@@ -1,0 +1,44 @@
+<Window x:Class="VideoSplitter.Views.FastCutWarningDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource DarkWindowStyle}"
+        Title="VideoSplitter — Précision de coupe"
+        Width="540"
+        SizeToContent="Height"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+    <Border Background="{StaticResource SurfaceBrush}" Padding="18">
+        <StackPanel>
+            <TextBlock x:Name="MessageTextBlock"
+                       TextWrapping="Wrap"
+                       FontSize="13.5"
+                       Margin="0,0,0,10" />
+
+            <TextBlock x:Name="DetailTextBlock"
+                       Style="{StaticResource MutedTextStyle}"
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,18" />
+
+            <WrapPanel HorizontalAlignment="Right">
+                <Button x:Name="FastAnywayButton"
+                        Content="Exporter quand même"
+                        Click="OnFastAnywayClick"
+                        Margin="0,0,8,4" />
+                <Button x:Name="PreciseSubsetButton"
+                        Content="Précis seulement pour ces segments"
+                        Style="{StaticResource PrimaryButtonStyle}"
+                        Click="OnPreciseSubsetClick"
+                        Margin="0,0,8,4" />
+                <Button x:Name="AllPreciseButton"
+                        Content="Tout en mode Précis"
+                        Click="OnAllPreciseClick"
+                        Margin="0,0,8,4" />
+                <Button Content="Annuler"
+                        IsCancel="True"
+                        Click="OnCancelClick"
+                        Margin="0,0,0,4" />
+            </WrapPanel>
+        </StackPanel>
+    </Border>
+</Window>

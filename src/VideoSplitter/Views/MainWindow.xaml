@@ -12,17 +12,24 @@
         Style="{StaticResource DarkWindowStyle}"
         Title="{Binding Title}"
         Width="1280"
-        Height="800"
+        Height="820"
         MinWidth="1000"
         MinHeight="650"
         AllowDrop="True"
         DragOver="OnWindowDragOver"
         Drop="OnWindowDrop"
         PreviewKeyDown="OnWindowPreviewKeyDown"
+        Closing="OnWindowClosing"
         WindowStartupLocation="CenterScreen">
+
+    <Window.TaskbarItemInfo>
+        <TaskbarItemInfo ProgressState="{Binding Export.TaskbarProgressState}"
+                         ProgressValue="{Binding Export.GlobalProgress}" />
+    </Window.TaskbarItemInfo>
 
     <Window.Resources>
         <conv:TimeSpanToStringConverter x:Key="TimeSpanConverter" />
+        <conv:EnumBooleanConverter x:Key="EnumBoolConverter" />
     </Window.Resources>
 
     <Grid>
@@ -33,7 +40,7 @@
             <RowDefinition Height="*" />
             <!-- Controles de lecture + barre de lecture -->
             <RowDefinition Height="Auto" />
-            <!-- Zone timeline (~120 px) -->
+            <!-- Zone timeline -->
             <RowDefinition Height="Auto" />
             <!-- Panneau du bas -->
             <RowDefinition Height="Auto" />
@@ -53,8 +60,9 @@
                             Margin="0,0,8,0" />
                     <Button Content="Exporter"
                             Style="{StaticResource PrimaryButtonStyle}"
-                            IsEnabled="False"
-                            ToolTip="Disponible a l'etape 6"
+                            Command="{Binding Export.ExportCommand}"
+                            Focusable="False"
+                            ToolTip="Exporter les segments inclus"
                             Margin="0,0,16,0" />
 
                     <Border Width="1"
@@ -66,18 +74,25 @@
                                Style="{StaticResource MutedTextStyle}"
                                Margin="0,0,10,0" />
                     <RadioButton Content="Rapide"
-                                 GroupName="ExportMode"
-                                 IsChecked="True"
+                                 GroupName="TopExportMode"
+                                 IsChecked="{Binding Export.Mode, Converter={StaticResource EnumBoolConverter}, ConverterParameter=Fast, Mode=TwoWay}"
+                                 ToolTip="Rapide : sans perte, quasi instantane, la coupe peut etre decalee jusqu'au keyframe precedent.&#x0a;Precis : re-encodage H.264/AAC, coupe exacte a l'image, plus lent."
                                  Focusable="False"
                                  Margin="0,0,12,0" />
-                    <RadioButton Content="Precis"
-                                 GroupName="ExportMode"
+                    <RadioButton Content="Précis"
+                                 GroupName="TopExportMode"
+                                 IsChecked="{Binding Export.Mode, Converter={StaticResource EnumBoolConverter}, ConverterParameter=Precise, Mode=TwoWay}"
+                                 ToolTip="Rapide : sans perte, quasi instantane, la coupe peut etre decalee jusqu'au keyframe precedent.&#x0a;Precis : re-encodage H.264/AAC, coupe exacte a l'image, plus lent."
                                  Focusable="False" />
                 </StackPanel>
 
-                <TextBlock DockPanel.Dock="Right"
-                           Text="{Binding Player.MediaSummary}"
-                           Style="{StaticResource MutedTextStyle}" />
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Player.ThumbnailStatus}"
+                               Style="{StaticResource MutedTextStyle}"
+                               Margin="0,0,14,0" />
+                    <TextBlock Text="{Binding Player.MediaSummary}"
+                               Style="{StaticResource MutedTextStyle}" />
+                </StackPanel>
             </DockPanel>
         </Border>
 
@@ -215,16 +230,16 @@
 
         <!-- 5. Panneau du bas -->
         <Border Grid.Row="4"
-                Height="175"
+                Height="215"
                 Background="{StaticResource SurfaceBrush}"
                 Padding="12,10">
             <Grid>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="2*" />
-                    <ColumnDefinition Width="12" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="12" />
-                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="1.45*" />
+                    <ColumnDefinition Width="10" />
+                    <ColumnDefinition Width="1.15*" />
+                    <ColumnDefinition Width="10" />
+                    <ColumnDefinition Width="1.3*" />
                 </Grid.ColumnDefinitions>
 
                 <!-- Liste des segments -->
@@ -268,11 +283,11 @@
                         <ListView.View>
                             <GridView>
                                 <GridViewColumn Header="#" Width="34" DisplayMemberBinding="{Binding Index}" />
-                                <GridViewColumn Header="Nom" Width="145">
+                                <GridViewColumn Header="Nom" Width="140">
                                     <GridViewColumn.CellTemplate>
                                         <DataTemplate>
                                             <TextBox Style="{StaticResource InlineEditTextBoxStyle}"
-                                                     MinWidth="125"
+                                                     MinWidth="120"
                                                      Text="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
                                                      PreviewKeyDown="OnSegmentNamePreviewKeyDown" />
                                         </DataTemplate>
@@ -344,12 +359,153 @@
                         BorderThickness="1"
                         CornerRadius="4"
                         Padding="10">
-                    <StackPanel>
-                        <TextBlock Text="OPTIONS D'EXPORT" Style="{StaticResource SectionTitleStyle}" />
-                        <TextBlock Text="Dossier de sortie : —" Style="{StaticResource MutedTextStyle}" Margin="0,4,0,4" />
-                        <TextBlock Text="Modele : {nom}_part{NN}" Style="{StaticResource MutedTextStyle}" Margin="0,0,0,4" />
-                        <TextBlock Text="Qualite / Encodeur : Auto (CRF 18)" Style="{StaticResource MutedTextStyle}" />
-                    </StackPanel>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="72" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Grid.Row="0" Grid.ColumnSpan="2"
+                                       Text="OPTIONS D'EXPORT"
+                                       Style="{StaticResource SectionTitleStyle}" />
+
+                            <!-- Mode -->
+                            <TextBlock Grid.Row="1" Grid.Column="0"
+                                       Text="Mode :"
+                                       Style="{StaticResource MutedTextStyle}"
+                                       Margin="0,0,0,6" />
+                            <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Margin="0,0,0,6">
+                                <RadioButton Content="Rapide"
+                                             GroupName="BottomExportMode"
+                                             IsChecked="{Binding Export.Mode, Converter={StaticResource EnumBoolConverter}, ConverterParameter=Fast, Mode=TwoWay}"
+                                             ToolTip="Rapide : sans perte, quasi instantane, la coupe peut etre decalee jusqu'au keyframe precedent.&#x0a;Precis : re-encodage H.264/AAC, coupe exacte a l'image, plus lent."
+                                             Focusable="False"
+                                             Margin="0,0,12,0" />
+                                <RadioButton Content="Précis"
+                                             GroupName="BottomExportMode"
+                                             IsChecked="{Binding Export.Mode, Converter={StaticResource EnumBoolConverter}, ConverterParameter=Precise, Mode=TwoWay}"
+                                             ToolTip="Rapide : sans perte, quasi instantane, la coupe peut etre decalee jusqu'au keyframe precedent.&#x0a;Precis : re-encodage H.264/AAC, coupe exacte a l'image, plus lent."
+                                             Focusable="False" />
+                            </StackPanel>
+
+                            <!-- Qualite CRF -->
+                            <TextBlock Grid.Row="2" Grid.Column="0"
+                                       Text="Qualité :"
+                                       Style="{StaticResource MutedTextStyle}"
+                                       IsEnabled="{Binding Export.IsPreciseMode}"
+                                       Margin="0,0,0,6" />
+                            <Grid Grid.Row="2" Grid.Column="1"
+                                  IsEnabled="{Binding Export.IsPreciseMode}"
+                                  Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Slider Grid.Column="0"
+                                        Minimum="14"
+                                        Maximum="28"
+                                        IsSnapToTickEnabled="True"
+                                        TickFrequency="1"
+                                        Value="{Binding Export.Crf, Mode=TwoWay}"
+                                        Focusable="False"
+                                        ToolTip="Qualité CRF en mode Précis (14 = haute qualité, 28 = fichier plus léger)" />
+                                <TextBlock Grid.Column="1"
+                                           FontFamily="Consolas"
+                                           FontSize="12"
+                                           Foreground="{StaticResource TextSecondaryBrush}"
+                                           Margin="8,0,0,0"
+                                           Text="{Binding Export.Crf, StringFormat=CRF {0}}" />
+                            </Grid>
+
+                            <!-- Encodeur -->
+                            <TextBlock Grid.Row="3" Grid.Column="0"
+                                       Text="Encodeur :"
+                                       Style="{StaticResource MutedTextStyle}"
+                                       IsEnabled="{Binding Export.IsPreciseMode}"
+                                       Margin="0,0,0,6" />
+                            <Grid Grid.Row="3" Grid.Column="1" Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <ComboBox Grid.Column="0"
+                                          ItemsSource="{Binding Export.EncoderOptions}"
+                                          SelectedValuePath="Kind"
+                                          SelectedValue="{Binding Export.SelectedEncoder, Mode=TwoWay}"
+                                          DisplayMemberPath="Label"
+                                          IsEnabled="{Binding Export.IsPreciseMode}"
+                                          Focusable="False">
+                                    <ComboBox.ItemContainerStyle>
+                                        <Style TargetType="{x:Type ComboBoxItem}" BasedOn="{StaticResource {x:Type ComboBoxItem}}">
+                                            <Setter Property="IsEnabled" Value="{Binding IsEnabled}" />
+                                        </Style>
+                                    </ComboBox.ItemContainerStyle>
+                                </ComboBox>
+                                <TextBlock Grid.Column="1"
+                                           Text="{Binding Export.EncoderStatus}"
+                                           Style="{StaticResource MutedTextStyle}"
+                                           FontSize="11"
+                                           Margin="8,0,0,0" />
+                            </Grid>
+
+                            <!-- Dossier de sortie -->
+                            <TextBlock Grid.Row="4" Grid.Column="0"
+                                       Text="Dossier :"
+                                       Style="{StaticResource MutedTextStyle}"
+                                       Margin="0,0,0,6" />
+                            <Grid Grid.Row="4" Grid.Column="1" Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox Grid.Column="0"
+                                         Text="{Binding Export.OutputFolder, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="{Binding Export.OutputFolder}"
+                                         Margin="0,0,4,0" />
+                                <Button Grid.Column="1"
+                                        Content="Parcourir…"
+                                        Command="{Binding Export.BrowseFolderCommand}"
+                                        Padding="7,3"
+                                        MinHeight="24"
+                                        Focusable="False"
+                                        Margin="0,0,4,0" />
+                                <Button Grid.Column="2"
+                                        Content="Ouvrir"
+                                        Command="{Binding Export.OpenOutputFolderCommand}"
+                                        Padding="7,3"
+                                        MinHeight="24"
+                                        Focusable="False" />
+                            </Grid>
+
+                            <!-- Modele de nom -->
+                            <TextBlock Grid.Row="5" Grid.Column="0"
+                                       Text="Modèle :"
+                                       Style="{StaticResource MutedTextStyle}"
+                                       Margin="0,0,0,4" />
+                            <TextBox Grid.Row="5" Grid.Column="1"
+                                     Text="{Binding Export.FileNamePattern, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     ToolTip="Jetons : {nom} (fichier source), {NN} (numéro), {debut} (hh-mm-ss), {segment} (nom du segment)"
+                                     Margin="0,0,0,4" />
+
+                            <TextBlock Grid.Row="6" Grid.Column="1"
+                                       Text="{Binding Export.PreviewFileName}"
+                                       Style="{StaticResource MutedTextStyle}"
+                                       FontSize="11"
+                                       TextTrimming="CharacterEllipsis"
+                                       ToolTip="{Binding Export.PreviewFileName}" />
+                        </Grid>
+                    </ScrollViewer>
                 </Border>
 
                 <!-- Progression -->
@@ -363,14 +519,172 @@
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
-                        <TextBlock Grid.Row="0" Text="PROGRESSION" Style="{StaticResource SectionTitleStyle}" />
-                        <ProgressBar Grid.Row="1" Minimum="0" Maximum="1" Value="{Binding Player.ThumbnailProgress, Mode=OneWay}" Margin="0,4,0,6" />
-                        <TextBlock Grid.Row="2" Text="{Binding Player.ThumbnailStatus}" Style="{StaticResource MutedTextStyle}" />
-                        <Button Grid.Row="4" Content="Annuler l'export" IsEnabled="False" HorizontalAlignment="Right" />
+
+                        <DockPanel Grid.Row="0" Margin="0,0,0,6">
+                            <TextBlock DockPanel.Dock="Left"
+                                       Text="PROGRESSION"
+                                       Style="{StaticResource SectionTitleStyle}"
+                                       Margin="0" />
+                            <Button DockPanel.Dock="Right"
+                                    Focusable="False"
+                                    MinHeight="26"
+                                    Padding="10,3">
+                                <Button.Style>
+                                    <Style TargetType="{x:Type Button}" BasedOn="{StaticResource PrimaryButtonStyle}">
+                                        <Setter Property="Content" Value="Exporter" />
+                                        <Setter Property="Command" Value="{Binding Export.ExportCommand}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Export.IsExporting}" Value="True">
+                                                <Setter Property="Content" Value="Annuler l'export" />
+                                                <Setter Property="Command" Value="{Binding Export.CancelCommand}" />
+                                                <Setter Property="Background" Value="{StaticResource SurfaceElevatedBrush}" />
+                                                <Setter Property="BorderBrush" Value="{StaticResource DangerBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                        </DockPanel>
+
+                        <Grid Grid.Row="1" Margin="0,0,0,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <ProgressBar Grid.Column="0"
+                                         Minimum="0"
+                                         Maximum="1"
+                                         Value="{Binding Export.GlobalProgress, Mode=OneWay}"
+                                         Margin="0,0,8,0" />
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding Export.GlobalProgressPercentText}"
+                                       FontFamily="Consolas"
+                                       FontSize="12"
+                                       Foreground="{StaticResource TextSecondaryBrush}" />
+                            <TextBlock Grid.Column="2"
+                                       Text="{Binding Export.EstimatedRemaining}"
+                                       FontFamily="Consolas"
+                                       FontSize="11"
+                                       Foreground="{StaticResource TextMutedBrush}"
+                                       Margin="8,0,0,0" />
+                        </Grid>
+
+                        <ListView Grid.Row="2"
+                                  ItemsSource="{Binding Export.Items}"
+                                  SelectionMode="Single"
+                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                  Margin="0,0,0,6">
+                            <ListView.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Copier les détails techniques"
+                                              Command="{Binding PlacementTarget.DataContext.Export.CopyItemTechnicalDetailsCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                              CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                              IsEnabled="{Binding PlacementTarget.SelectedItem.HasTechnicalDetails, RelativeSource={RelativeSource AncestorType=ContextMenu}, FallbackValue=False}" />
+                                </ContextMenu>
+                            </ListView.ContextMenu>
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="2,1" ToolTip="{Binding Message}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="16" />
+                                            <ColumnDefinition Width="1.2*" />
+                                            <ColumnDefinition Width="75" />
+                                            <ColumnDefinition Width="70" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <Path Grid.Column="0"
+                                              Width="11"
+                                              Height="11"
+                                              Stretch="Uniform"
+                                              VerticalAlignment="Center">
+                                            <Path.Style>
+                                                <Style TargetType="{x:Type Path}">
+                                                    <Setter Property="Data" Value="M 2 6 L 10 6" />
+                                                    <Setter Property="Stroke" Value="{StaticResource TextMutedBrush}" />
+                                                    <Setter Property="StrokeThickness" Value="1.8" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Status}" Value="EnCours">
+                                                            <Setter Property="Data" Value="M 3 2 L 9 6 L 3 10 Z" />
+                                                            <Setter Property="Fill" Value="{StaticResource AccentBrush}" />
+                                                            <Setter Property="StrokeThickness" Value="0" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Status}" Value="Termine">
+                                                            <Setter Property="Data" Value="M 1.5 6 L 4.5 9 L 10.5 3" />
+                                                            <Setter Property="Stroke" Value="{StaticResource SuccessBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Status}" Value="Erreur">
+                                                            <Setter Property="Data" Value="M 2 2 L 10 10 M 10 2 L 2 10" />
+                                                            <Setter Property="Stroke" Value="{StaticResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Status}" Value="Annule">
+                                                            <Setter Property="Data" Value="M 2 2 L 10 10 M 10 2 L 2 10" />
+                                                            <Setter Property="Stroke" Value="{StaticResource WarningBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Path.Style>
+                                        </Path>
+
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding OutputFileName}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   FontSize="12"
+                                                   Margin="4,0,6,0" />
+
+                                        <ProgressBar Grid.Column="2"
+                                                     Minimum="0"
+                                                     Maximum="1"
+                                                     Height="6"
+                                                     Value="{Binding Fraction, Mode=OneWay}"
+                                                     Margin="0,0,6,0" />
+
+                                        <TextBlock Grid.Column="3"
+                                                   Text="{Binding StatusLabel}"
+                                                   FontSize="11"
+                                                   HorizontalAlignment="Right">
+                                            <TextBlock.Style>
+                                                <Style TargetType="{x:Type TextBlock}">
+                                                    <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Status}" Value="EnCours">
+                                                            <Setter Property="Foreground" Value="{StaticResource AccentHoverBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Status}" Value="Termine">
+                                                            <Setter Property="Foreground" Value="{StaticResource SuccessBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Status}" Value="Erreur">
+                                                            <Setter Property="Foreground" Value="{StaticResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Status}" Value="Annule">
+                                                            <Setter Property="Foreground" Value="{StaticResource WarningBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+
+                        <DockPanel Grid.Row="3">
+                            <Button DockPanel.Dock="Right"
+                                    Content="Ouvrir le dossier"
+                                    Command="{Binding Export.OpenOutputFolderCommand}"
+                                    Padding="8,3"
+                                    MinHeight="24"
+                                    Focusable="False" />
+                            <TextBlock Text="{Binding Export.Summary}"
+                                       Style="{StaticResource MutedTextStyle}"
+                                       FontSize="11.5"
+                                       TextTrimming="CharacterEllipsis"
+                                       ToolTip="{Binding Export.Summary}"
+                                       Margin="0,0,8,0" />
+                        </DockPanel>
                     </Grid>
                 </Border>
             </Grid>
