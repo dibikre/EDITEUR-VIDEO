@@ -64,6 +64,7 @@ public sealed class TimelineControl : Control
     private IImmutableBrush _disabledFilmstripScrimBrush = Brushes.Transparent;
     private IImmutableBrush _markerBrush = Brushes.Orange;
     private IImmutableBrush _markerSelectedBrush = Brushes.Red;
+    private IImmutableBrush _pendingStartBrush = Brushes.LimeGreen;
     private IPen _borderPen = null!;
     private IPen _majorTickPen = null!;
     private IPen _minorTickPen = null!;
@@ -74,6 +75,7 @@ public sealed class TimelineControl : Control
     private IPen _markerPen = null!;
     private IPen _markerSelectedPen = null!;
     private IPen _markerHandleOutlinePen = null!;
+    private IPen _pendingStartPen = null!;
     private StreamGeometry _markerDiamondGeometry = null!;
     private Typeface _labelTypeface;
     private Typeface _emptyTypeface;
@@ -158,6 +160,9 @@ public sealed class TimelineControl : Control
     public static readonly StyledProperty<bool> SnapToKeyframesProperty =
         AvaloniaProperty.Register<TimelineControl, bool>(nameof(SnapToKeyframes), true);
 
+    public static readonly StyledProperty<TimeSpan?> PendingSegmentStartProperty =
+        AvaloniaProperty.Register<TimelineControl, TimeSpan?>(nameof(PendingSegmentStart), null);
+
     static TimelineControl()
     {
         DurationProperty.Changed.AddClassHandler<TimelineControl>((c, _) => c.HandleDurationChanged());
@@ -171,6 +176,7 @@ public sealed class TimelineControl : Control
         SegmentsProperty.Changed.AddClassHandler<TimelineControl>((c, _) => c.HandleSegmentsChanged());
         SelectedSegmentIdProperty.Changed.AddClassHandler<TimelineControl>((c, _) => c.ScheduleRender());
         SelectedMarkerIndexProperty.Changed.AddClassHandler<TimelineControl>((c, _) => c.ScheduleRender());
+        PendingSegmentStartProperty.Changed.AddClassHandler<TimelineControl>((c, _) => c.ScheduleRender());
     }
 
     public TimeSpan Duration
@@ -255,6 +261,12 @@ public sealed class TimelineControl : Control
     {
         get => GetValue(SnapToKeyframesProperty);
         set => SetValue(SnapToKeyframesProperty, value);
+    }
+
+    public TimeSpan? PendingSegmentStart
+    {
+        get => GetValue(PendingSegmentStartProperty);
+        set => SetValue(PendingSegmentStartProperty, value);
     }
 
     public event EventHandler<TimeSpan>? SeekRequested;
@@ -707,6 +719,11 @@ public sealed class TimelineControl : Control
             DrawMarkers(context, width, totalSeconds, pps, offsetSeconds, segments);
         }
 
+        if (PendingSegmentStart is TimeSpan pendingStart)
+        {
+            DrawPendingStartMarker(context, width, totalSeconds, pps, offsetSeconds, pendingStart);
+        }
+
         DrawPlayhead(context, width, height, totalSeconds, pps, offsetSeconds);
 
         if (_isHovering)
@@ -969,6 +986,37 @@ public sealed class TimelineControl : Control
                 dc.DrawGeometry(handleBrush, _markerHandleOutlinePen, _markerDiamondGeometry);
             }
         }
+    }
+
+    private void DrawPendingStartMarker(
+        DrawingContext dc,
+        double width,
+        double totalSeconds,
+        double pps,
+        double offsetSeconds,
+        TimeSpan pendingStart)
+    {
+        double startSec = Math.Clamp(pendingStart.TotalSeconds, 0.0, totalSeconds);
+        double x = (startSec - offsetSeconds) * pps;
+        if (x < -10.0 || x > width + 10.0)
+        {
+            return;
+        }
+
+        double alignedX = Math.Round(x) + 0.5;
+        double bandBottom = SegmentsBandTop + SegmentsBandHeight;
+        dc.DrawLine(_pendingStartPen, new Point(alignedX, RulerHeight), new Point(alignedX, bandBottom));
+
+        var flag = new StreamGeometry();
+        using (StreamGeometryContext ctx = flag.Open())
+        {
+            ctx.BeginFigure(new Point(alignedX, RulerHeight), true);
+            ctx.LineTo(new Point(alignedX + 10.0, RulerHeight + 5.0));
+            ctx.LineTo(new Point(alignedX, RulerHeight + 10.0));
+            ctx.EndFigure(true);
+        }
+
+        dc.DrawGeometry(_pendingStartBrush, _markerHandleOutlinePen, flag);
     }
 
     private void DrawPlayhead(
@@ -1646,6 +1694,7 @@ public sealed class TimelineControl : Control
         _disabledFilmstripScrimBrush = new ImmutableSolidColorBrush(Color.FromArgb(0x99, 0x09, 0x0A, 0x0C));
         _markerBrush = new ImmutableSolidColorBrush(Color.FromRgb(0xF5, 0x9E, 0x0B));
         _markerSelectedBrush = new ImmutableSolidColorBrush(Color.FromRgb(0xEF, 0x44, 0x44));
+        _pendingStartBrush = ResolveBrush("SuccessBrush", Color.FromRgb(0x22, 0xC5, 0x5E));
 
         IImmutableBrush borderBrush = ResolveBrush("BorderBrush", Color.FromRgb(0x2E, 0x34, 0x40));
         IImmutableBrush selectedBorderBrush = ResolveBrush("AccentHoverBrush", Color.FromRgb(0x60, 0xA5, 0xFA));
@@ -1659,6 +1708,7 @@ public sealed class TimelineControl : Control
         _markerPen = new ImmutablePen(_markerBrush, 2.0);
         _markerSelectedPen = new ImmutablePen(_markerSelectedBrush, 2.5);
         _markerHandleOutlinePen = new ImmutablePen(_backgroundBrush, 1.0);
+        _pendingStartPen = new ImmutablePen(_pendingStartBrush, 2.0);
 
         IImmutableBrush hoverBrush = new ImmutableSolidColorBrush(Color.FromArgb(0x99, 0xED, 0xF0, 0xF5));
         _hoverPen = new ImmutablePen(hoverBrush, 1.0);

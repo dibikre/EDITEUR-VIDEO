@@ -54,6 +54,9 @@ public sealed partial class EditViewModel : ObservableObject, IDisposable
     private string _keyframeStatus = string.Empty;
 
     [ObservableProperty]
+    private TimeSpan? _pendingSegmentStart;
+
+    [ObservableProperty]
     private string _editStatus = string.Empty;
 
     [ObservableProperty]
@@ -126,6 +129,7 @@ public sealed partial class EditViewModel : ObservableObject, IDisposable
         }
 
         HasMedia = initial.Count > 0;
+        PendingSegmentStart = null;
         Keyframes = Array.Empty<double>();
         KeyframeStatus = HasMedia ? "Analyse keyframes..." : string.Empty;
         ClearTransientStatus();
@@ -278,6 +282,100 @@ public sealed partial class EditViewModel : ObservableObject, IDisposable
 
     private bool CanSplit() => HasMedia;
 
+    public void SetPendingSegmentStart(TimeSpan target)
+    {
+        if (!HasMedia)
+        {
+            return;
+        }
+
+        TimeSpan maxDuration = _currentMedia?.Duration ?? (Segments.Count > 0 ? Segments[^1].End : TimeSpan.Zero);
+        TimeSpan clamped = target < TimeSpan.Zero ? TimeSpan.Zero : (maxDuration > TimeSpan.Zero && target > maxDuration ? maxDuration : target);
+
+        PendingSegmentStart = clamped;
+        _statusTimer.Stop();
+        EditStatus = BuildPendingStartStatus(clamped);
+        _logger.Info($"Debut en attente defini a {clamped:hh\\:mm\\:ss\\.fff}");
+    }
+
+    public bool ClearPendingSegmentStart()
+    {
+        if (!PendingSegmentStart.HasValue)
+        {
+            return false;
+        }
+
+        PendingSegmentStart = null;
+        ClearTransientStatus();
+        return true;
+    }
+
+    public void CompleteSegmentWithEnd(TimeSpan target)
+    {
+        if (!HasMedia)
+        {
+            return;
+        }
+
+        if (PendingSegmentStart is TimeSpan start)
+        {
+            if (target <= start || target - start < SegmentEditor.MinDuration)
+            {
+                ShowTransientStatus("La fin doit etre apres le debut (>= 0,1 s).");
+                return;
+            }
+
+            SegmentEditResult result = SegmentEditor.DefineSegment(Segments, start, target, _nextSegmentNumber);
+            if (!result.Success)
+            {
+                ShowTransientStatus(result.ErrorMessage ?? "Definition du segment impossible.");
+                return;
+            }
+
+            _nextSegmentNumber += Math.Max(0, result.AllocatedSegmentNames);
+            PendingSegmentStart = null;
+            _logger.Info($"Segment defini [{start:hh\\:mm\\:ss\\.fff} -> {target:hh\\:mm\\:ss\\.fff}]");
+            Apply(result.Segments, result.CreatedSegmentId, clearMarkerSelection: true);
+            return;
+        }
+
+        if (Segments.Count == 1)
+        {
+            SegmentEditResult initialResult = SegmentEditor.DefineSegment(Segments, TimeSpan.Zero, target, _nextSegmentNumber);
+            if (!initialResult.Success)
+            {
+                ShowTransientStatus(initialResult.ErrorMessage ?? "Point de fin invalide.");
+                return;
+            }
+
+            _nextSegmentNumber += Math.Max(0, initialResult.AllocatedSegmentNames);
+            _logger.Info($"Segment defini [00:00:00.000 -> {target:hh\\:mm\\:ss\\.fff}]");
+            Apply(initialResult.Segments, initialResult.CreatedSegmentId, clearMarkerSelection: true);
+            return;
+        }
+
+        if (SelectedSegmentId is Guid selId
+            && FindSegmentIndex(Segments, selId) is int selIdx
+            && selIdx >= 0
+            && Segments[selIdx].Enabled
+            && target > Segments[selIdx].Start + SegmentEditor.MinDuration)
+        {
+            if (selIdx < Segments.Count - 1 && target < Segments[selIdx + 1].End - SegmentEditor.MinDuration)
+            {
+                ApplyBoundaryMove(selIdx, target);
+                return;
+            }
+
+            if (selIdx == Segments.Count - 1)
+            {
+                SetOutAt(target);
+                return;
+            }
+        }
+
+        ShowTransientStatus("Definissez d'abord le debut par clic gauche.");
+    }
+
     public void SetInAt(TimeSpan target)
     {
         if (!HasMedia)
@@ -285,6 +383,7 @@ public sealed partial class EditViewModel : ObservableObject, IDisposable
             return;
         }
 
+        PendingSegmentStart = null;
         int previousCount = Segments.Count;
         SegmentEditResult result = SegmentEditor.SetIn(Segments, target, _nextSegmentNumber);
         if (!result.Success)
@@ -460,6 +559,7 @@ public sealed partial class EditViewModel : ObservableObject, IDisposable
             return;
         }
 
+        PendingSegmentStart = null;
         IReadOnlyList<Segment> restored = _history.Undo();
         Guid? nextSelection = ResolveSelectionAfterRestore(restored, SelectedSegmentId);
 
@@ -477,6 +577,7 @@ public sealed partial class EditViewModel : ObservableObject, IDisposable
             return;
         }
 
+        PendingSegmentStart = null;
         IReadOnlyList<Segment> restored = _history.Redo();
         Guid? nextSelection = ResolveSelectionAfterRestore(restored, SelectedSegmentId);
 
@@ -833,7 +934,16 @@ public sealed partial class EditViewModel : ObservableObject, IDisposable
 
     private void OnStatusTimerTick(object? sender, EventArgs e)
     {
-        ClearTransientStatus();
+        _statusTimer.Stop();
+        EditStatus = PendingSegmentStart is TimeSpan start
+            ? BuildPendingStartStatus(start)
+            : string.Empty;
+    }
+
+    private static string BuildPendingStartStatus(TimeSpan start)
+    {
+        int totalHours = (int)start.TotalHours;
+        return $"Début : {totalHours:D2}:{start.Minutes:D2}:{start.Seconds:D2}.{start.Milliseconds:D3} — clic droit pour la fin (Échap pour annuler)";
     }
 
     private static int FindSegmentIndex(IReadOnlyList<Segment> segments, Guid id)

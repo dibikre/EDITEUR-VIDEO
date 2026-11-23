@@ -7,7 +7,8 @@ public readonly record struct SegmentEditResult(
     bool Success,
     IReadOnlyList<Segment> Segments,
     string? ErrorMessage = null,
-    Guid? CreatedSegmentId = null);
+    Guid? CreatedSegmentId = null,
+    int AllocatedSegmentNames = 0);
 
 public static class SegmentEditor
 {
@@ -227,6 +228,158 @@ public static class SegmentEditor
         }
 
         return MoveBoundary(list, idx, t);
+    }
+
+    public static SegmentEditResult DefineSegment(
+        IReadOnlyList<Segment> list,
+        TimeSpan start,
+        TimeSpan end,
+        int nextSegmentNumber)
+    {
+        if (list.Count == 0)
+        {
+            return Fail(list, "Aucun segment disponible.");
+        }
+
+        TimeSpan totalEnd = list[^1].End;
+        TimeSpan clampedStart = start < TimeSpan.Zero ? TimeSpan.Zero : (start > totalEnd ? totalEnd : start);
+        TimeSpan clampedEnd = end < TimeSpan.Zero ? TimeSpan.Zero : (end > totalEnd ? totalEnd : end);
+
+        if (clampedEnd <= clampedStart || clampedEnd - clampedStart < MinDuration)
+        {
+            return Fail(list, "Impossible de definir le segment : duree trop courte (< 0,1 s).");
+        }
+
+        int startIdx = ContainingIndex(list, clampedStart);
+        Segment startSeg = list[startIdx];
+        TimeSpan effectiveStart = clampedStart;
+        if (effectiveStart - startSeg.Start < MinDuration)
+        {
+            effectiveStart = startSeg.Start;
+        }
+        else if (startSeg.End - effectiveStart < MinDuration)
+        {
+            if (startSeg.End < clampedEnd && clampedEnd - startSeg.End >= MinDuration)
+            {
+                effectiveStart = startSeg.End;
+            }
+            else if (startSeg.End - startSeg.Start >= MinDuration + MinDuration)
+            {
+                effectiveStart = startSeg.End - MinDuration;
+            }
+        }
+
+        int endIdx = ContainingIndex(list, clampedEnd);
+        Segment endSeg = list[endIdx];
+        TimeSpan effectiveEnd = clampedEnd;
+        if (endSeg.End - effectiveEnd < MinDuration)
+        {
+            effectiveEnd = endSeg.End;
+        }
+        else if (effectiveEnd - endSeg.Start < MinDuration)
+        {
+            if (endSeg.Start > effectiveStart && endSeg.Start - effectiveStart >= MinDuration)
+            {
+                effectiveEnd = endSeg.Start;
+            }
+            else if (endSeg.End - endSeg.Start >= MinDuration + MinDuration)
+            {
+                effectiveEnd = endSeg.Start + MinDuration;
+            }
+        }
+
+        if (effectiveEnd <= effectiveStart || effectiveEnd - effectiveStart < MinDuration)
+        {
+            return Fail(list, "Impossible de definir le segment : duree trop courte (< 0,1 s).");
+        }
+
+        bool isInitialFullSegment = list.Count == 1
+            && list[0].Enabled
+            && list[0].Start == TimeSpan.Zero
+            && list[0].End == totalEnd;
+
+        if (isInitialFullSegment && effectiveStart == TimeSpan.Zero && effectiveEnd == totalEnd)
+        {
+            return new SegmentEditResult(true, list, CreatedSegmentId: list[0].Id);
+        }
+
+        var nextList = new List<Segment>(list.Count + 2);
+        int nameCounter = nextSegmentNumber;
+        bool inserted = false;
+        Guid createdId = Guid.Empty;
+
+        for (int i = 0; i < list.Count; i++)
+        {
+            Segment seg = list[i];
+
+            if (seg.End <= effectiveStart)
+            {
+                nextList.Add(seg);
+                continue;
+            }
+
+            if (seg.Start >= effectiveEnd)
+            {
+                if (!inserted)
+                {
+                    var created = new Segment(Guid.NewGuid(), effectiveStart, effectiveEnd, true, $"Segment {nameCounter++}");
+                    createdId = created.Id;
+                    nextList.Add(created);
+                    inserted = true;
+                }
+
+                nextList.Add(seg);
+                continue;
+            }
+
+            bool hasLeftRemainder = seg.Start < effectiveStart;
+            bool hasRightRemainder = seg.End > effectiveEnd;
+
+            if (hasLeftRemainder)
+            {
+                bool leftEnabled = isInitialFullSegment ? false : seg.Enabled;
+                nextList.Add(seg with { End = effectiveStart, Enabled = leftEnabled });
+            }
+
+            if (!inserted)
+            {
+                string segName = isInitialFullSegment && !hasLeftRemainder
+                    ? seg.Name
+                    : $"Segment {nameCounter++}";
+                var created = new Segment(Guid.NewGuid(), effectiveStart, effectiveEnd, true, segName);
+                createdId = created.Id;
+                nextList.Add(created);
+                inserted = true;
+            }
+
+            if (hasRightRemainder)
+            {
+                bool rightEnabled = isInitialFullSegment ? false : seg.Enabled;
+                if (hasLeftRemainder || (isInitialFullSegment && !hasLeftRemainder))
+                {
+                    nextList.Add(new Segment(Guid.NewGuid(), effectiveEnd, seg.End, rightEnabled, $"Segment {nameCounter++}"));
+                }
+                else
+                {
+                    nextList.Add(seg with { Start = effectiveEnd, Enabled = rightEnabled });
+                }
+            }
+        }
+
+        if (!inserted)
+        {
+            var created = new Segment(Guid.NewGuid(), effectiveStart, effectiveEnd, true, $"Segment {nameCounter++}");
+            createdId = created.Id;
+            nextList.Add(created);
+        }
+
+        Segment[] resultArray = nextList.ToArray();
+        AssertInvariants(resultArray);
+        return new SegmentEditResult(
+            true,
+            resultArray,
+            CreatedSegmentId: createdId,
+            AllocatedSegmentNames: nameCounter - nextSegmentNumber);
     }
 
     public static SegmentEditResult MergeBoundary(IReadOnlyList<Segment> list, int boundaryIndex)

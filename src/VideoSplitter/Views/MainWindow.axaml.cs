@@ -413,12 +413,12 @@ public partial class MainWindow : Window
 
     private void OnTimelineSetInRequested(object? sender, TimeSpan target)
     {
-        _viewModel.Edit.SetInAt(target);
+        _viewModel.Edit.SetPendingSegmentStart(target);
     }
 
     private void OnTimelineSetOutRequested(object? sender, TimeSpan target)
     {
-        _viewModel.Edit.SetOutAt(target);
+        _viewModel.Edit.CompleteSegmentWithEnd(target);
     }
 
     private void OnTimelineSegmentSelectionRequested(object? sender, Guid? segmentId)
@@ -594,7 +594,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (e.Key == Key.Escape && MainTimelineView.CancelActiveDrag())
+        if (e.Key == Key.Escape && (MainTimelineView.CancelActiveDrag() || _viewModel.Edit.ClearPendingSegmentStart()))
         {
             e.Handled = true;
             return;

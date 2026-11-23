@@ -137,6 +137,7 @@
                                       SelectedMarkerIndex="{Binding #RootTimelineView.Edit.SelectedMarkerIndex, Mode=OneWay}"
                                       Keyframes="{Binding #RootTimelineView.Edit.Keyframes, Mode=OneWay}"
                                       SnapToKeyframes="{Binding #RootTimelineView.Edit.SnapToKeyframes, Mode=OneWay}"
+                                      PendingSegmentStart="{Binding #RootTimelineView.Edit.PendingSegmentStart, Mode=OneWay}"
                                       SeekRequested="OnTimelineSeekRequested"
                                       SeekCompleted="OnTimelineSeekCompleted"
                                       SetInRequested="OnTimelineSetInRequested"
