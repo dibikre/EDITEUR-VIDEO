@@ -11,15 +11,25 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     public PlayerViewModel Player { get; }
     public TimelineViewModel Timeline { get; }
+    public EditViewModel Edit { get; }
 
     [ObservableProperty]
     private string _title = "VideoSplitter";
 
-    public MainViewModel(PlayerViewModel player, TimelineViewModel timeline, IAppLogger logger)
+    public MainViewModel(
+        PlayerViewModel player,
+        TimelineViewModel timeline,
+        EditViewModel edit,
+        IAppLogger logger)
     {
         Player = player;
         Timeline = timeline;
+        Edit = edit;
         _logger = logger;
+
+        Edit.ConfigurePlaybackBridge(
+            () => (Player.Position, Timeline.PixelsPerSecond),
+            target => Player.SeekTo(target));
 
         Player.PropertyChanged += OnPlayerPropertyChanged;
         _logger.Info("MainViewModel initialise.");
@@ -34,6 +44,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                 : "VideoSplitter";
 
             Timeline.ResetForNewMedia();
+
+            if (Player.MediaInfo is { } openedMedia)
+            {
+                Edit.OnVideoOpened(openedMedia);
+            }
         }
     }
 

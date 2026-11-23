@@ -8,4 +8,5 @@ public sealed record MediaInfo(
     double Fps,
     string VideoCodec,
     string? AudioCodec,
-    bool HasAudio);
+    bool HasAudio,
+    TimeSpan StartTime = default);

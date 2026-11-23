@@ -64,6 +64,7 @@ public partial class App : Application
 
         services.AddSingleton<PlayerViewModel>();
         services.AddSingleton<TimelineViewModel>();
+        services.AddSingleton<EditViewModel>();
         services.AddSingleton<MainViewModel>();
         services.AddTransient<MainWindow>();
     }

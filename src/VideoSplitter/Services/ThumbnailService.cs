@@ -101,13 +101,13 @@ public sealed class ThumbnailService : IThumbnailService
         catch (OperationCanceledException)
         {
             _logger.Info($"Generation des vignettes annulee : {layout.Directory}");
-            TryDeleteDirectory(layout.Directory);
+            CleanupSpriteFiles(layout.Directory);
             throw;
         }
         catch (Exception ex)
         {
             _logger.Error($"Echec de generation des vignettes ({media.Path})", ex);
-            TryDeleteDirectory(layout.Directory);
+            CleanupSpriteFiles(layout.Directory);
             throw;
         }
     }
@@ -353,17 +353,7 @@ public sealed class ThumbnailService : IThumbnailService
 
     private void PrepareEmptyDirectory(string directory)
     {
-        if (Directory.Exists(directory))
-        {
-            foreach (string file in Directory.EnumerateFiles(directory))
-            {
-                if (!Path.GetFileName(file).Equals(".lastused", StringComparison.OrdinalIgnoreCase))
-                {
-                    File.Delete(file);
-                }
-            }
-        }
-
+        CleanupSpriteFiles(directory);
         _cacheService.TouchCacheDirectory(directory);
     }
 
@@ -390,18 +380,29 @@ public sealed class ThumbnailService : IThumbnailService
     private static string GetSheetPath(string directory, int index)
         => Path.Combine(directory, $"sprite_{index:D3}.jpg");
 
-    private void TryDeleteDirectory(string directory)
+    private void CleanupSpriteFiles(string directory)
     {
         try
         {
-            if (Directory.Exists(directory))
+            if (!Directory.Exists(directory))
             {
-                Directory.Delete(directory, recursive: true);
+                return;
+            }
+
+            foreach (string file in Directory.EnumerateFiles(directory, "sprite_*.jpg"))
+            {
+                File.Delete(file);
+            }
+
+            string metaPath = Path.Combine(directory, "meta.json");
+            if (File.Exists(metaPath))
+            {
+                File.Delete(metaPath);
             }
         }
         catch (Exception ex)
         {
-            _logger.Warn($"Impossible de nettoyer le dossier de cache incomplet {directory} : {ex.Message}");
+            _logger.Warn($"Impossible de nettoyer les vignettes incompletes dans {directory} : {ex.Message}");
         }
     }
 }

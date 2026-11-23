@@ -197,19 +197,25 @@
                 BorderBrush="{StaticResource BorderBrush}"
                 BorderThickness="0,0,0,1"
                 Padding="12,8">
-            <controls:TimelineView Duration="{Binding Player.Duration}"
+            <controls:TimelineView x:Name="MainTimelineView"
+                                   Duration="{Binding Player.Duration}"
                                    Position="{Binding Player.Position}"
                                    IsPlaying="{Binding Player.IsPlaying}"
                                    PlaybackSpeed="{Binding Player.Speed}"
                                    Thumbnails="{Binding Player.Thumbnails}"
                                    Timeline="{Binding Timeline}"
+                                   Edit="{Binding Edit}"
                                    SeekRequested="OnSeekBarSeekRequested"
-                                   SeekCompleted="OnSeekBarSeekCompleted" />
+                                   SeekCompleted="OnSeekBarSeekCompleted"
+                                   SegmentSelectionRequested="OnTimelineSegmentSelectionRequested"
+                                   MarkerSelectionRequested="OnTimelineMarkerSelectionRequested"
+                                   BoundaryDragPreview="OnTimelineBoundaryDragPreview"
+                                   BoundaryDragCompleted="OnTimelineBoundaryDragCompleted" />
         </Border>
 
-        <!-- 5. Panneau du bas (placeholders) -->
+        <!-- 5. Panneau du bas -->
         <Border Grid.Row="4"
-                Height="170"
+                Height="175"
                 Background="{StaticResource SurfaceBrush}"
                 Padding="12,10">
             <Grid>
@@ -227,16 +233,105 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
-                    <TextBlock Grid.Row="0" Text="LISTE DES SEGMENTS" Style="{StaticResource SectionTitleStyle}" />
-                    <ListView Grid.Row="1">
+                    <DockPanel Grid.Row="0" Margin="0,0,0,6">
+                        <TextBlock DockPanel.Dock="Left"
+                                   Text="LISTE DES SEGMENTS"
+                                   Style="{StaticResource SectionTitleStyle}"
+                                   Margin="0" />
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+                            <TextBlock Text="{Binding Edit.EditStatus}"
+                                       Foreground="{StaticResource WarningBrush}"
+                                       FontSize="12"
+                                       Margin="0,0,12,0" />
+                            <TextBlock Text="{Binding Edit.SummaryText}"
+                                       Style="{StaticResource MutedTextStyle}" />
+                        </StackPanel>
+                    </DockPanel>
+                    <ListView x:Name="SegmentsListView"
+                              Grid.Row="1"
+                              ItemsSource="{Binding Edit.SegmentRows}"
+                              SelectedItem="{Binding Edit.SelectedSegmentRow, Mode=TwoWay}"
+                              SelectionMode="Single"
+                              PreviewMouseLeftButtonDown="OnSegmentsListPreviewMouseLeftButtonDown"
+                              PreviewMouseLeftButtonUp="OnSegmentsListPreviewMouseLeftButtonUp">
+                        <ListView.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="Activer / Desactiver (E)"
+                                          Command="{Binding PlacementTarget.DataContext.Edit.ToggleEnabledCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <Separator />
+                                <MenuItem Header="Fusionner avec le precedent"
+                                          Command="{Binding PlacementTarget.DataContext.Edit.MergeWithPreviousCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <MenuItem Header="Fusionner avec le suivant"
+                                          Command="{Binding PlacementTarget.DataContext.Edit.MergeWithNextCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                            </ContextMenu>
+                        </ListView.ContextMenu>
                         <ListView.View>
                             <GridView>
-                                <GridViewColumn Header="#" Width="36" />
-                                <GridViewColumn Header="Nom" Width="150" />
-                                <GridViewColumn Header="Debut" Width="85" />
-                                <GridViewColumn Header="Fin" Width="85" />
-                                <GridViewColumn Header="Duree" Width="85" />
-                                <GridViewColumn Header="Inclus" Width="55" />
+                                <GridViewColumn Header="#" Width="34" DisplayMemberBinding="{Binding Index}" />
+                                <GridViewColumn Header="Nom" Width="145">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBox Style="{StaticResource InlineEditTextBoxStyle}"
+                                                     MinWidth="125"
+                                                     Text="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                                     PreviewKeyDown="OnSegmentNamePreviewKeyDown" />
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <GridViewColumn Header="Debut" Width="88">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock FontFamily="Consolas"
+                                                       Text="{Binding Start, Converter={StaticResource TimeSpanConverter}, ConverterParameter=ms}" />
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <GridViewColumn Header="Fin" Width="88">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock FontFamily="Consolas"
+                                                       Text="{Binding End, Converter={StaticResource TimeSpanConverter}, ConverterParameter=ms}" />
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <GridViewColumn Header="Duree" Width="82">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock FontFamily="Consolas"
+                                                       Text="{Binding Duration, Converter={StaticResource TimeSpanConverter}, ConverterParameter=ms}" />
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <GridViewColumn Header="Inclus" Width="48">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <CheckBox IsChecked="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                      HorizontalAlignment="Center"
+                                                      Focusable="False" />
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <GridViewColumn Header="KF" Width="34">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding KeyframeBadge}"
+                                                       ToolTip="{Binding KeyframeTooltip}"
+                                                       HorizontalAlignment="Center"
+                                                       FontWeight="Bold">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="{x:Type TextBlock}">
+                                                        <Setter Property="Foreground" Value="{StaticResource WarningBrush}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsOnKeyframe}" Value="True">
+                                                                <Setter Property="Foreground" Value="{StaticResource SuccessBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
                             </GridView>
                         </ListView.View>
                     </ListView>

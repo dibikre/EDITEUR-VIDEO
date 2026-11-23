@@ -47,6 +47,12 @@ public partial class TimelineView : UserControl
         typeof(TimelineView),
         new PropertyMetadata(null, OnTimelineViewModelChanged));
 
+    public static readonly DependencyProperty EditProperty = DependencyProperty.Register(
+        nameof(Edit),
+        typeof(EditViewModel),
+        typeof(TimelineView),
+        new PropertyMetadata(null));
+
     public TimeSpan Duration
     {
         get => (TimeSpan)GetValue(DurationProperty);
@@ -83,14 +89,26 @@ public partial class TimelineView : UserControl
         set => SetValue(TimelineProperty, value);
     }
 
+    public EditViewModel? Edit
+    {
+        get => (EditViewModel?)GetValue(EditProperty);
+        set => SetValue(EditProperty, value);
+    }
+
     public event EventHandler<TimeSpan>? SeekRequested;
     public event EventHandler<TimeSpan>? SeekCompleted;
+    public event EventHandler<Guid?>? SegmentSelectionRequested;
+    public event EventHandler<int?>? MarkerSelectionRequested;
+    public event EventHandler<(int Index, TimeSpan Time)>? BoundaryDragPreview;
+    public event EventHandler<(int Index, TimeSpan Time, bool Cancelled)>? BoundaryDragCompleted;
 
     public TimelineView()
     {
         InitializeComponent();
         Unloaded += OnUnloaded;
     }
+
+    public bool CancelActiveDrag() => TimelineCanvas.CancelActiveDrag();
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
@@ -145,6 +163,26 @@ public partial class TimelineView : UserControl
     private void OnTimelineSeekCompleted(object? sender, TimeSpan target)
     {
         SeekCompleted?.Invoke(this, target);
+    }
+
+    private void OnTimelineSegmentSelectionRequested(object? sender, Guid? segmentId)
+    {
+        SegmentSelectionRequested?.Invoke(this, segmentId);
+    }
+
+    private void OnTimelineMarkerSelectionRequested(object? sender, int? markerIndex)
+    {
+        MarkerSelectionRequested?.Invoke(this, markerIndex);
+    }
+
+    private void OnTimelineBoundaryDragPreview(object? sender, (int Index, TimeSpan Time) e)
+    {
+        BoundaryDragPreview?.Invoke(this, e);
+    }
+
+    private void OnTimelineBoundaryDragCompleted(object? sender, (int Index, TimeSpan Time, bool Cancelled) e)
+    {
+        BoundaryDragCompleted?.Invoke(this, e);
     }
 
     private void OnTimelineViewportChanged(object? sender, EventArgs e)

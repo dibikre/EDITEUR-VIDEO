@@ -131,15 +131,15 @@ Contrôle personnalisé `TimelineControl` (un `FrameworkElement` avec `OnRender`
 
 Opérations :
 - **Split** (`S`) : coupe le segment sous le playhead en deux.
-- **In / Out** (`I` / `O`) : définit le début/la fin du segment sélectionné.
+- **In / Out** (`I` / `O`) : agissent sur le segment contenant le playhead. Si ce n'est pas le premier/dernier, déplacent la frontière avec le voisin vers le playhead ; si c'est le premier/dernier, coupent au playhead et désactivent la partie extérieure (rognage).
 - **Supprimer un marqueur** : fusionne les deux segments adjacents.
-- **Activer/désactiver** un segment (case à cocher dans la liste).
+- **Activer/désactiver** un segment (`E` ou case à cocher dans la liste).
 - **Redimensionner** un segment en glissant un marqueur.
-- **Annuler / Rétablir** (`Ctrl+Z` / `Ctrl+Y`) : pile d'annulation (pattern Command) pour toutes les opérations ci-dessus.
+- **Annuler / Rétablir** (`Ctrl+Z` / `Ctrl+Y` / `Ctrl+Shift+Z`) : pile de **snapshots immuables** de la liste de segments (`EditHistory`, limite 200) pour toutes les opérations ci-dessus.
 - Invariants : segments contigus, triés, sans chevauchement, durée minimale 0,1 s, le premier commence à 0 et le dernier finit à la durée totale.
 
 ### 5.7 Panneau du bas
-- **Liste des segments** (`ListView`) : numéro, nom éditable, début, fin, durée, case « inclus ». Cliquer un segment déplace le playhead à son début.
+- **Liste des segments** (`ListView`) : numéro, nom éditable, début, fin, durée, case « inclus », indicateur « début sur keyframe ». Cliquer un segment le sélectionne et déplace le playhead à son début.
 - **Options d'export** : dossier de sortie, modèle de nom (`{nom}_part{NN}`, extension identique à la source par défaut), mode Rapide/Précis, qualité (CRF 18 par défaut) en mode précis, encodeur (Auto / CPU / NVENC / QSV / AMF).
 - **Progression** : barre par tâche, barre globale, bouton Annuler, bouton « Ouvrir le dossier » en fin d'export.
 
@@ -178,7 +178,8 @@ Commun aux deux modes :
 ```csharp
 public sealed record MediaInfo(
     string Path, TimeSpan Duration, int Width, int Height,
-    double Fps, string VideoCodec, string? AudioCodec, bool HasAudio);
+    double Fps, string VideoCodec, string? AudioCodec, bool HasAudio,
+    TimeSpan StartTime = default);
 
 public sealed record SpriteSet(
     string Directory, double IntervalSeconds, int ThumbWidth, int ThumbHeight,
@@ -197,7 +198,7 @@ public interface IFfmpegService
     Task<MediaInfo> ProbeAsync(string path, CancellationToken ct);
     // Keyframes via : ffprobe -v error -select_streams v:0
     //   -show_entries packet=pts_time,flags -of csv=p=0 "<in>"   (lignes dont flags contient 'K')
-    Task<IReadOnlyList<double>> GetKeyframesAsync(string path, CancellationToken ct);
+    Task<IReadOnlyList<double>> GetKeyframesAsync(string path, MediaInfo media, CancellationToken ct);
     Task<string?> DetectHardwareEncoderAsync(CancellationToken ct);
 }
 
@@ -234,11 +235,11 @@ VideoSplitter/
     App.xaml / App.xaml.cs            (composition root DI, Core.Initialize, thème)
     Assets/ffmpeg/                    (binaires, non versionnés)
     Models/        MediaInfo, Segment, SpriteSet, ExportJob, ...
+    Editing/       SegmentEditor, KeyframeSnapper, EditHistory
     Services/      FfmpegService, ThumbnailService, ExportService, CacheService
-    ViewModels/    MainViewModel, PlayerViewModel, TimelineViewModel, ExportViewModel
-    Controls/      TimelineControl, SeekBar (avec popup de vignette), ThumbnailPopup
+    ViewModels/    MainViewModel, PlayerViewModel, TimelineViewModel, EditViewModel, ExportViewModel
+    Controls/      TimelineControl, TimelineView, SeekBar, ThumbnailHoverPopup
     Converters/    TimeSpanToStringConverter, ...
-    Commands/      (undo/redo)
     Views/         MainWindow.xaml(.cs)
     Themes/        Dark.xaml
 ```

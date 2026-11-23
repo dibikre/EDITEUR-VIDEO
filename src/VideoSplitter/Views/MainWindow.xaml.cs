@@ -1,7 +1,9 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 using System.Windows.Input;
+using System.Windows.Media;
 using VideoSplitter.Services;
 using VideoSplitter.ViewModels;
 using VlcMediaPlayer = LibVLCSharp.Shared.MediaPlayer;
@@ -13,6 +15,7 @@ public partial class MainWindow : Window
     private readonly MainViewModel _viewModel;
     private readonly VlcMediaPlayer _mediaPlayer;
     private readonly IAppLogger _logger;
+    private SegmentRowViewModel? _mouseDownAlreadySelectedRow;
 
     public MainWindow(MainViewModel viewModel, VlcMediaPlayer mediaPlayer, IAppLogger logger)
     {
@@ -68,6 +71,115 @@ public partial class MainWindow : Window
         _viewModel.Player.SeekFromBar(target, isFinal: true);
     }
 
+    private void OnTimelineSegmentSelectionRequested(object? sender, Guid? segmentId)
+    {
+        _viewModel.Edit.SelectSegment(segmentId);
+    }
+
+    private void OnTimelineMarkerSelectionRequested(object? sender, int? markerIndex)
+    {
+        _viewModel.Edit.SelectMarker(markerIndex);
+    }
+
+    private void OnTimelineBoundaryDragPreview(object? sender, (int Index, TimeSpan Time) e)
+    {
+        _viewModel.Player.SeekFromBar(e.Time, isFinal: false);
+    }
+
+    private void OnTimelineBoundaryDragCompleted(object? sender, (int Index, TimeSpan Time, bool Cancelled) e)
+    {
+        if (e.Cancelled)
+        {
+            return;
+        }
+
+        _viewModel.Edit.ApplyBoundaryMove(e.Index, e.Time);
+        _viewModel.Player.SeekFromBar(e.Time, isFinal: true);
+    }
+
+    private void OnSegmentsListPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        _mouseDownAlreadySelectedRow = null;
+        if (e.OriginalSource is not DependencyObject source)
+        {
+            return;
+        }
+
+        if (FindAncestor<TextBoxBase>(source) is not null || FindAncestor<CheckBox>(source) is not null)
+        {
+            return;
+        }
+
+        ListViewItem? item = FindAncestor<ListViewItem>(source);
+        if (item is { IsSelected: true, DataContext: SegmentRowViewModel row })
+        {
+            _mouseDownAlreadySelectedRow = row;
+        }
+    }
+
+    private void OnSegmentsListPreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        SegmentRowViewModel? targetRow = _mouseDownAlreadySelectedRow;
+        _mouseDownAlreadySelectedRow = null;
+
+        if (targetRow is null || e.OriginalSource is not DependencyObject source)
+        {
+            return;
+        }
+
+        if (FindAncestor<TextBoxBase>(source) is not null || FindAncestor<CheckBox>(source) is not null)
+        {
+            return;
+        }
+
+        ListViewItem? item = FindAncestor<ListViewItem>(source);
+        if (item is { DataContext: SegmentRowViewModel releasedRow } && ReferenceEquals(releasedRow, targetRow))
+        {
+            _viewModel.Edit.SeekToSegmentStart(releasedRow.Id);
+        }
+    }
+
+    private void OnSegmentNamePreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (sender is not TextBox textBox)
+        {
+            return;
+        }
+
+        if (e.Key == Key.Enter)
+        {
+            BindingExpression? binding = textBox.GetBindingExpression(TextBox.TextProperty);
+            binding?.UpdateSource();
+            Keyboard.ClearFocus();
+            Focus();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape)
+        {
+            BindingExpression? binding = textBox.GetBindingExpression(TextBox.TextProperty);
+            binding?.UpdateTarget();
+            Keyboard.ClearFocus();
+            Focus();
+            e.Handled = true;
+        }
+    }
+
+    private static T? FindAncestor<T>(DependencyObject current) where T : DependencyObject
+    {
+        DependencyObject? node = current;
+        while (node is not null)
+        {
+            if (node is T match)
+            {
+                return match;
+            }
+
+            node = VisualTreeHelper.GetParent(node);
+        }
+
+        return null;
+    }
+
     private void OnWindowDragOver(object sender, DragEventArgs e)
     {
         if (TryGetDroppedVideoPath(e, out _))
@@ -120,6 +232,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (e.Key == Key.Escape && MainTimelineView.CancelActiveDrag())
+        {
+            e.Handled = true;
+            return;
+        }
+
         if (!_viewModel.Player.IsMediaLoaded)
         {
             return;
@@ -131,6 +249,31 @@ public partial class MainWindow : Window
         {
             switch (e.Key)
             {
+                case Key.Z when shift:
+                    _viewModel.Edit.RedoCommand.Execute(null);
+                    e.Handled = true;
+                    break;
+
+                case Key.Z:
+                    _viewModel.Edit.UndoCommand.Execute(null);
+                    e.Handled = true;
+                    break;
+
+                case Key.Y:
+                    _viewModel.Edit.RedoCommand.Execute(null);
+                    e.Handled = true;
+                    break;
+
+                case Key.Left:
+                    _viewModel.Edit.PreviousKeyframeCommand.Execute(null);
+                    e.Handled = true;
+                    break;
+
+                case Key.Right:
+                    _viewModel.Edit.NextKeyframeCommand.Execute(null);
+                    e.Handled = true;
+                    break;
+
                 case Key.OemPlus:
                 case Key.Add:
                     _viewModel.Timeline.ZoomInCommand.Execute(null);
@@ -157,6 +300,41 @@ public partial class MainWindow : Window
         {
             case Key.Space:
                 _viewModel.Player.PlayPauseCommand.Execute(null);
+                e.Handled = true;
+                break;
+
+            case Key.S:
+                _viewModel.Edit.SplitCommand.Execute(null);
+                e.Handled = true;
+                break;
+
+            case Key.I:
+                _viewModel.Edit.SetInCommand.Execute(null);
+                e.Handled = true;
+                break;
+
+            case Key.O:
+                _viewModel.Edit.SetOutCommand.Execute(null);
+                e.Handled = true;
+                break;
+
+            case Key.E:
+                _viewModel.Edit.ToggleEnabledCommand.Execute(null);
+                e.Handled = true;
+                break;
+
+            case Key.Delete:
+                _viewModel.Edit.DeleteMarkerCommand.Execute(null);
+                e.Handled = true;
+                break;
+
+            case Key.PageUp:
+                _viewModel.Edit.PreviousMarkerCommand.Execute(null);
+                e.Handled = true;
+                break;
+
+            case Key.PageDown:
+                _viewModel.Edit.NextMarkerCommand.Execute(null);
                 e.Handled = true;
                 break;
 
