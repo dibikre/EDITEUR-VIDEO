@@ -78,6 +78,7 @@ public partial class App : Application
         services.AddSingleton<ICacheService, CacheService>();
         services.AddSingleton<ISettingsService, SettingsService>();
         services.AddSingleton<IThumbnailService, ThumbnailService>();
+        services.AddSingleton<IRangeThumbnailService, RangeThumbnailService>();
         services.AddSingleton<IExportService, ExportService>();
         services.AddSingleton<IExportQueue, ExportQueue>();
 

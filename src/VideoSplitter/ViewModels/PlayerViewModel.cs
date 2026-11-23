@@ -21,10 +21,12 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     private readonly LibVLC _libVlc;
     private readonly IFfmpegService _ffmpegService;
     private readonly IThumbnailService _thumbnailService;
+    private readonly IRangeThumbnailService _rangeThumbnailService;
     private readonly IAppLogger _logger;
 
     private CancellationTokenSource? _openCts;
     private CancellationTokenSource? _thumbnailCts;
+    private CancellationTokenSource? _rangeThumbnailCts;
     private Media? _currentMedia;
     private int _pauseOnFirstPlay;
     private int _hasVoutForCurrentOpen;
@@ -83,6 +85,9 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     private IThumbnailProvider? _thumbnails;
 
     [ObservableProperty]
+    private IRangeThumbnailProvider? _rangeThumbnails;
+
+    [ObservableProperty]
     private bool _isGeneratingThumbnails;
 
     [ObservableProperty]
@@ -100,12 +105,14 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         LibVLC libVlc,
         IFfmpegService ffmpegService,
         IThumbnailService thumbnailService,
+        IRangeThumbnailService rangeThumbnailService,
         IAppLogger logger)
     {
         _mediaPlayer = mediaPlayer;
         _libVlc = libVlc;
         _ffmpegService = ffmpegService;
         _thumbnailService = thumbnailService;
+        _rangeThumbnailService = rangeThumbnailService;
         _logger = logger;
 
         AttachMediaPlayerEvents();
@@ -357,6 +364,64 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         }
     }
 
+    public void RequestRangeThumbnails(double startSeconds, double endSeconds, double viewportWidth)
+    {
+        if (_disposed || MediaInfo is not { } media)
+        {
+            return;
+        }
+
+        _rangeThumbnailCts?.Cancel();
+        _rangeThumbnailCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _rangeThumbnailCts = cts;
+
+        _ = LoadRangeThumbnailsAsync(media, startSeconds, endSeconds, viewportWidth, cts);
+    }
+
+    public void ClearRangeThumbnails()
+    {
+        _rangeThumbnailCts?.Cancel();
+        _rangeThumbnailCts?.Dispose();
+        _rangeThumbnailCts = null;
+
+        IRangeThumbnailProvider? previous = RangeThumbnails;
+        if (previous is not null)
+        {
+            RangeThumbnails = null;
+            previous.Dispose();
+        }
+    }
+
+    private async Task LoadRangeThumbnailsAsync(
+        MediaInfo media,
+        double startSeconds,
+        double endSeconds,
+        double viewportWidth,
+        CancellationTokenSource cts)
+    {
+        try
+        {
+            IRangeThumbnailProvider? provider = await Task.Run(
+                () => _rangeThumbnailService.ExtractRangeAsync(media, startSeconds, endSeconds, viewportWidth, cts.Token),
+                cts.Token);
+
+            if (cts.IsCancellationRequested || _disposed || !ReferenceEquals(_rangeThumbnailCts, cts))
+            {
+                provider?.Dispose();
+                return;
+            }
+
+            IRangeThumbnailProvider? previous = RangeThumbnails;
+            RangeThumbnails = provider;
+            previous?.Dispose();
+        }
+        catch (OperationCanceledException)
+        {
+            // Annulation normale lors d'un nouveau zoom ou sortie du zoom.
+        }
+    }
+
     private void CancelThumbnailGeneration()
     {
         _thumbnailCts?.Cancel();
@@ -365,6 +430,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
         Thumbnails?.Dispose();
         Thumbnails = null;
+        ClearRangeThumbnails();
         IsGeneratingThumbnails = false;
         ThumbnailProgress = 0.0;
         ThumbnailStatus = "En attente";

@@ -27,6 +27,9 @@ public partial class TimelineView : UserControl
     public static readonly StyledProperty<IThumbnailProvider?> ThumbnailsProperty =
         AvaloniaProperty.Register<TimelineView, IThumbnailProvider?>(nameof(Thumbnails), null);
 
+    public static readonly StyledProperty<IRangeThumbnailProvider?> RangeThumbnailsProperty =
+        AvaloniaProperty.Register<TimelineView, IRangeThumbnailProvider?>(nameof(RangeThumbnails), null);
+
     public static readonly StyledProperty<TimelineViewModel?> TimelineProperty =
         AvaloniaProperty.Register<TimelineView, TimelineViewModel?>(nameof(Timeline), null);
 
@@ -69,6 +72,12 @@ public partial class TimelineView : UserControl
         set => SetValue(ThumbnailsProperty, value);
     }
 
+    public IRangeThumbnailProvider? RangeThumbnails
+    {
+        get => GetValue(RangeThumbnailsProperty);
+        set => SetValue(RangeThumbnailsProperty, value);
+    }
+
     public TimelineViewModel? Timeline
     {
         get => GetValue(TimelineProperty);
@@ -89,6 +98,8 @@ public partial class TimelineView : UserControl
     public event EventHandler<int?>? MarkerSelectionRequested;
     public event EventHandler<(int Index, TimeSpan Time)>? BoundaryDragPreview;
     public event EventHandler<(int Index, TimeSpan Time, bool Cancelled)>? BoundaryDragCompleted;
+    public event EventHandler<(double StartSeconds, double EndSeconds, double ViewportWidth)>? RangeZoomSelected;
+    public event EventHandler? RangeZoomCleared;
 
     public TimelineView()
     {
@@ -110,6 +121,7 @@ public partial class TimelineView : UserControl
         if (_subscribedViewModel is not null)
         {
             _subscribedViewModel.ZoomStepRequested += OnZoomStepRequested;
+            _subscribedViewModel.RangeZoomCleared += OnViewModelRangeZoomCleared;
         }
     }
 
@@ -118,6 +130,7 @@ public partial class TimelineView : UserControl
         if (_subscribedViewModel is not null)
         {
             _subscribedViewModel.ZoomStepRequested -= OnZoomStepRequested;
+            _subscribedViewModel.RangeZoomCleared -= OnViewModelRangeZoomCleared;
             _subscribedViewModel = null;
         }
     }
@@ -125,6 +138,11 @@ public partial class TimelineView : UserControl
     private void OnZoomStepRequested(object? sender, double factor)
     {
         TimelineCanvas.ZoomByFactorCentered(factor);
+    }
+
+    private void OnViewModelRangeZoomCleared(object? sender, EventArgs e)
+    {
+        RangeZoomCleared?.Invoke(this, EventArgs.Empty);
     }
 
     private void OnTimelineSeekRequested(object? sender, TimeSpan target)
@@ -170,6 +188,11 @@ public partial class TimelineView : UserControl
     private void OnTimelineViewportChanged(object? sender, EventArgs e)
     {
         SyncScrollBar();
+    }
+
+    private void OnTimelineRangeZoomSelected(object? sender, (double StartSeconds, double EndSeconds, double ViewportWidth) e)
+    {
+        RangeZoomSelected?.Invoke(this, e);
     }
 
     private void OnScrollBarScroll(object? sender, ScrollEventArgs e)

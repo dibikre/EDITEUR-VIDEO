@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using VideoSplitter.Export;
 using VideoSplitter.Models;
 using VideoSplitter.Services;
 
@@ -11,12 +12,15 @@ public sealed partial class SettingsViewModel : ObservableObject
     private readonly IAppLogger _logger;
     private bool _isInitializing = true;
     private bool _isAdjustingFolderMode;
+    private string _sampleSourceName = "video";
+    private string _sampleSourceExtension = ".mp4";
 
     public Func<string?, Task<string?>>? PickFolderAsync { get; set; }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsFastMode))]
     [NotifyPropertyChangedFor(nameof(IsPreciseMode))]
+    [NotifyPropertyChangedFor(nameof(FileNamePreviewText))]
     [NotifyPropertyChangedFor(nameof(ExportSummaryText))]
     private ExportMode _exportMode = ExportMode.Fast;
 
@@ -25,6 +29,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(IsCustomOutputFolder))]
     [NotifyPropertyChangedFor(nameof(IsOverwriteSource))]
     [NotifyPropertyChangedFor(nameof(CustomFolderDisplay))]
+    [NotifyPropertyChangedFor(nameof(FileNamePreviewText))]
     [NotifyPropertyChangedFor(nameof(ExportSummaryText))]
     private OutputFolderMode _outputFolderMode = OutputFolderMode.SameAsSource;
 
@@ -32,6 +37,10 @@ public sealed partial class SettingsViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CustomFolderDisplay))]
     [NotifyPropertyChangedFor(nameof(ExportSummaryText))]
     private string _customOutputFolder = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(FileNamePreviewText))]
+    private string _fileNamePattern = ExportPlanner.DefaultPattern;
 
     [ObservableProperty]
     private bool _showVolumeGauge = true;
@@ -100,6 +109,22 @@ public sealed partial class SettingsViewModel : ObservableObject
         ? "Aucun dossier sélectionné"
         : CustomOutputFolder;
 
+    public string FileNamePreviewText
+    {
+        get
+        {
+            string ext = ExportPlanner.ResolveOutputExtension(_sampleSourceExtension, ExportMode);
+            if (OutputFolderMode == OutputFolderMode.OverwriteSource)
+            {
+                return $"Remplacement de la source : {_sampleSourceName}{ext}";
+            }
+
+            var sampleSegment = new Segment(Guid.Empty, TimeSpan.Zero, TimeSpan.FromSeconds(10), true, "Segment 1");
+            string stem = ExportPlanner.BuildFileName(FileNamePattern, _sampleSourceName, 1, 2, sampleSegment);
+            return $"Exemple : {stem}{ext}";
+        }
+    }
+
     public string ExportSummaryText
     {
         get
@@ -124,8 +149,27 @@ public sealed partial class SettingsViewModel : ObservableObject
         _exportMode = loaded.ExportMode;
         _outputFolderMode = loaded.OutputFolderMode;
         _customOutputFolder = loaded.CustomOutputFolder;
+        _fileNamePattern = loaded.FileNamePattern;
         _showVolumeGauge = loaded.ShowVolumeGauge;
         _isInitializing = false;
+    }
+
+    public void UpdateMediaSample(string? mediaPath)
+    {
+        if (string.IsNullOrWhiteSpace(mediaPath))
+        {
+            _sampleSourceName = "video";
+            _sampleSourceExtension = ".mp4";
+        }
+        else
+        {
+            string name = Path.GetFileNameWithoutExtension(mediaPath);
+            string ext = Path.GetExtension(mediaPath);
+            _sampleSourceName = string.IsNullOrWhiteSpace(name) ? "video" : name;
+            _sampleSourceExtension = string.IsNullOrWhiteSpace(ext) ? ".mp4" : ext;
+        }
+
+        OnPropertyChanged(nameof(FileNamePreviewText));
     }
 
     partial void OnExportModeChanged(ExportMode value) => PersistIfReady();
@@ -133,6 +177,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     partial void OnOutputFolderModeChanged(OutputFolderMode value) => PersistIfReady();
 
     partial void OnCustomOutputFolderChanged(string value) => PersistIfReady();
+
+    partial void OnFileNamePatternChanged(string value) => PersistIfReady();
 
     partial void OnShowVolumeGaugeChanged(bool value) => PersistIfReady();
 
@@ -212,6 +258,7 @@ public sealed partial class SettingsViewModel : ObservableObject
             ExportMode = ExportMode,
             OutputFolderMode = OutputFolderMode,
             CustomOutputFolder = CustomOutputFolder,
+            FileNamePattern = FileNamePattern,
             ShowVolumeGauge = ShowVolumeGauge
         });
     }

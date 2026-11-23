@@ -21,7 +21,7 @@ public sealed class TimelineControl : Control
     private const double FilmstripHeight = 80.0;
     private const double SegmentsBandTop = 108.0;
     private const double SegmentsBandHeight = 22.0;
-    private const double MaxPixelsPerSecond = 500.0;
+    private const double MaxPixelsPerSecond = 2000.0;
     private const double WheelZoomFactor = 1.25;
     private const double EdgeScrollMarginPx = 20.0;
     private const double MinMajorTickSpacingPx = 90.0;
@@ -76,6 +76,9 @@ public sealed class TimelineControl : Control
     private IPen _markerSelectedPen = null!;
     private IPen _markerHandleOutlinePen = null!;
     private IPen _pendingStartPen = null!;
+    private IImmutableBrush _zoomRangeFillBrush = Brushes.Transparent;
+    private IImmutableBrush _zoomRangeBadgeBrush = Brushes.Transparent;
+    private IPen _zoomRangeBorderPen = null!;
     private StreamGeometry _markerDiamondGeometry = null!;
     private Typeface _labelTypeface;
     private Typeface _emptyTypeface;
@@ -101,6 +104,10 @@ public sealed class TimelineControl : Control
     private double _dragMarkerStartX;
     private double _dragMarkerOriginalSeconds;
     private double _dragMarkerSeconds;
+    private bool _isSelectingZoomRange;
+    private double _zoomSelectStartX;
+    private double _zoomSelectStartSeconds;
+    private double _zoomSelectCurrentSeconds;
     private bool _isHovering;
     private double _hoverX;
     private double _lastDragX;
@@ -124,6 +131,9 @@ public sealed class TimelineControl : Control
     public static readonly StyledProperty<IThumbnailProvider?> ThumbnailsProperty =
         AvaloniaProperty.Register<TimelineControl, IThumbnailProvider?>(nameof(Thumbnails), null);
 
+    public static readonly StyledProperty<IRangeThumbnailProvider?> RangeThumbnailsProperty =
+        AvaloniaProperty.Register<TimelineControl, IRangeThumbnailProvider?>(nameof(RangeThumbnails), null);
+
     public static readonly StyledProperty<double> PixelsPerSecondProperty =
         AvaloniaProperty.Register<TimelineControl, double>(
             nameof(PixelsPerSecond),
@@ -140,6 +150,12 @@ public sealed class TimelineControl : Control
         AvaloniaProperty.Register<TimelineControl, bool>(
             nameof(IsFitToWindow),
             true,
+            defaultBindingMode: BindingMode.TwoWay);
+
+    public static readonly StyledProperty<bool> IsRangeZoomActiveProperty =
+        AvaloniaProperty.Register<TimelineControl, bool>(
+            nameof(IsRangeZoomActive),
+            false,
             defaultBindingMode: BindingMode.TwoWay);
 
     public static readonly StyledProperty<bool> FollowPlaybackProperty =
@@ -170,6 +186,7 @@ public sealed class TimelineControl : Control
         IsPlayingProperty.Changed.AddClassHandler<TimelineControl>((c, _) => c.HandleIsPlayingChanged());
         PlaybackSpeedProperty.Changed.AddClassHandler<TimelineControl>((c, _) => c.ReanchorPlayhead(c.GetCurrentExtrapolatedSeconds()));
         ThumbnailsProperty.Changed.AddClassHandler<TimelineControl>((c, e) => c.HandleThumbnailsChanged(e));
+        RangeThumbnailsProperty.Changed.AddClassHandler<TimelineControl>((c, _) => c.ScheduleRender());
         PixelsPerSecondProperty.Changed.AddClassHandler<TimelineControl>((c, _) => c.HandleViewportPropertyChanged());
         ScrollOffsetSecondsProperty.Changed.AddClassHandler<TimelineControl>((c, _) => c.HandleViewportPropertyChanged());
         IsFitToWindowProperty.Changed.AddClassHandler<TimelineControl>((c, e) => c.HandleIsFitToWindowChanged(e));
@@ -209,6 +226,12 @@ public sealed class TimelineControl : Control
         set => SetValue(ThumbnailsProperty, value);
     }
 
+    public IRangeThumbnailProvider? RangeThumbnails
+    {
+        get => GetValue(RangeThumbnailsProperty);
+        set => SetValue(RangeThumbnailsProperty, value);
+    }
+
     public double PixelsPerSecond
     {
         get => GetValue(PixelsPerSecondProperty);
@@ -225,6 +248,12 @@ public sealed class TimelineControl : Control
     {
         get => GetValue(IsFitToWindowProperty);
         set => SetValue(IsFitToWindowProperty, value);
+    }
+
+    public bool IsRangeZoomActive
+    {
+        get => GetValue(IsRangeZoomActiveProperty);
+        set => SetValue(IsRangeZoomActiveProperty, value);
     }
 
     public bool FollowPlayback
@@ -278,6 +307,7 @@ public sealed class TimelineControl : Control
     public event EventHandler<int?>? MarkerSelectionRequested;
     public event EventHandler<(int Index, TimeSpan Time)>? BoundaryDragPreview;
     public event EventHandler<(int Index, TimeSpan Time, bool Cancelled)>? BoundaryDragCompleted;
+    public event EventHandler<(double StartSeconds, double EndSeconds, double ViewportWidth)>? RangeZoomSelected;
 
     public TimelineControl()
     {
@@ -479,6 +509,22 @@ public sealed class TimelineControl : Control
 
     public bool CancelActiveDrag()
     {
+        if (_isSelectingZoomRange)
+        {
+            _edgeScrollTimer.Stop();
+            _isSelectingZoomRange = false;
+            ReleasePointerCapture();
+            _hoverPopup.Hide();
+
+            if (!Equals(Cursor, HandCursor))
+            {
+                Cursor = HandCursor;
+            }
+
+            InvalidateVisual();
+            return true;
+        }
+
         if (_isDraggingMarker)
         {
             _edgeScrollTimer.Stop();
@@ -545,12 +591,46 @@ public sealed class TimelineControl : Control
         double minPps = GetMinPixelsPerSecond(width, totalSeconds);
         double currentPps = PixelsPerSecond > 0 ? PixelsPerSecond : minPps;
         double newPps = Math.Clamp(currentPps * factor, minPps, MaxPixelsPerSecond);
-        double newOffset = ClampOffset(anchorTime - (anchorX / newPps), newPps, width);
+        bool isFit = newPps <= minPps + 0.0001;
+        double newOffset = isFit ? 0.0 : ClampOffset(anchorTime - (anchorX / newPps), newPps, width);
+
+        NotifyUserNavigated();
+        SetViewportValues(newPps, newOffset, isFit: isFit);
+        ScheduleRender();
+        ViewportChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ZoomToRange(double rawStartSeconds, double rawEndSeconds)
+    {
+        double totalSeconds = GetTotalSeconds();
+        double width = Bounds.Width;
+        if (totalSeconds <= 0 || width <= 0)
+        {
+            return;
+        }
+
+        double t1 = Math.Clamp(Math.Min(rawStartSeconds, rawEndSeconds), 0.0, totalSeconds);
+        double t2 = Math.Clamp(Math.Max(rawStartSeconds, rawEndSeconds), 0.0, totalSeconds);
+
+        double minSpan = Math.Max(0.2, width / MaxPixelsPerSecond);
+        if (t2 - t1 < minSpan)
+        {
+            double mid = (t1 + t2) / 2.0;
+            t1 = Math.Clamp(mid - (minSpan / 2.0), 0.0, Math.Max(0.0, totalSeconds - minSpan));
+            t2 = Math.Min(totalSeconds, t1 + minSpan);
+        }
+
+        double span = Math.Max(0.05, t2 - t1);
+        double minPps = GetMinPixelsPerSecond(width, totalSeconds);
+        double newPps = Math.Clamp(width / span, minPps, MaxPixelsPerSecond);
+        double newOffset = ClampOffset(t1, newPps, width);
 
         NotifyUserNavigated();
         SetViewportValues(newPps, newOffset, isFit: false);
+        SetCurrentValue(IsRangeZoomActiveProperty, true);
         ScheduleRender();
         ViewportChanged?.Invoke(this, EventArgs.Empty);
+        RangeZoomSelected?.Invoke(this, (t1, t2, width));
     }
 
     private void SyncViewportToSize(double width)
@@ -726,6 +806,11 @@ public sealed class TimelineControl : Control
 
         DrawPlayhead(context, width, height, totalSeconds, pps, offsetSeconds);
 
+        if (_isSelectingZoomRange)
+        {
+            DrawZoomRangeSelection(context, width, totalSeconds, pps, offsetSeconds);
+        }
+
         if (_isHovering)
         {
             DrawHoverLine(context, width, height);
@@ -812,8 +897,10 @@ public sealed class TimelineControl : Control
         double offsetSeconds)
     {
         IThumbnailProvider? provider = Thumbnails;
-        double tileWidth = provider is not null && provider.Layout.ThumbHeight > 0
-            ? FilmstripHeight * provider.Layout.ThumbWidth / provider.Layout.ThumbHeight
+        IRangeThumbnailProvider? rangeProvider = RangeThumbnails;
+        IThumbnailProvider? layoutSource = provider ?? rangeProvider;
+        double tileWidth = layoutSource is not null && layoutSource.Layout.ThumbHeight > 0
+            ? FilmstripHeight * layoutSource.Layout.ThumbWidth / layoutSource.Layout.ThumbHeight
             : FilmstripHeight * (16.0 / 9.0);
 
         if (tileWidth <= 1.0)
@@ -845,11 +932,29 @@ public sealed class TimelineControl : Control
 
                 double xCenter = x + (tileWidth / 2.0);
                 double timeSec = Math.Clamp((xCenter / pps) + offsetSeconds, 0.0, totalSeconds);
+                TimeSpan tileTime = TimeSpan.FromSeconds(timeSec);
                 var tileRect = new Rect(x, FilmstripTop, tileWidth, FilmstripHeight);
 
-                if (provider is not null
-                    && provider.TryGetThumbnailTile(provider.IndexForTime(TimeSpan.FromSeconds(timeSec)), out IImage? sheet, out Rect sourceRect)
+                IImage? sheet = null;
+                Rect sourceRect = default;
+                bool hasTile = false;
+
+                if (rangeProvider is not null
+                    && rangeProvider.IsReady
+                    && rangeProvider.ContainsTime(timeSec)
+                    && rangeProvider.TryGetThumbnailTile(rangeProvider.IndexForTime(tileTime), out sheet, out sourceRect)
                     && sheet is not null)
+                {
+                    hasTile = true;
+                }
+                else if (provider is not null
+                    && provider.TryGetThumbnailTile(provider.IndexForTime(tileTime), out sheet, out sourceRect)
+                    && sheet is not null)
+                {
+                    hasTile = true;
+                }
+
+                if (hasTile && sheet is not null)
                 {
                     dc.DrawImage(sheet, sourceRect, tileRect);
                     dc.DrawRectangle(null, _borderPen, tileRect);
@@ -1056,6 +1161,45 @@ public sealed class TimelineControl : Control
         dc.DrawLine(_hoverPen, new Point(alignedX, 0.0), new Point(alignedX, height));
     }
 
+    private void DrawZoomRangeSelection(
+        DrawingContext dc,
+        double width,
+        double totalSeconds,
+        double pps,
+        double offsetSeconds)
+    {
+        double t1 = Math.Clamp(Math.Min(_zoomSelectStartSeconds, _zoomSelectCurrentSeconds), 0.0, totalSeconds);
+        double t2 = Math.Clamp(Math.Max(_zoomSelectStartSeconds, _zoomSelectCurrentSeconds), 0.0, totalSeconds);
+        double x1 = Math.Clamp((t1 - offsetSeconds) * pps, 0.0, width);
+        double x2 = Math.Clamp((t2 - offsetSeconds) * pps, 0.0, width);
+        double selWidth = Math.Max(1.0, x2 - x1);
+
+        var filmRect = new Rect(x1, RulerHeight, selWidth, FilmstripHeight + 2.0);
+        dc.DrawRectangle(_zoomRangeFillBrush, null, filmRect);
+        dc.DrawLine(_zoomRangeBorderPen, new Point(Math.Round(x1) + 0.5, RulerHeight), new Point(Math.Round(x1) + 0.5, SegmentsBandTop + SegmentsBandHeight));
+        dc.DrawLine(_zoomRangeBorderPen, new Point(Math.Round(x2) + 0.5, RulerHeight), new Point(Math.Round(x2) + 0.5, SegmentsBandTop + SegmentsBandHeight));
+
+        if (selWidth >= 24.0)
+        {
+            string rangeText = $"Zoom : {FormatRulerLabel(t1, totalSeconds >= 3600.0, true)} - {FormatRulerLabel(t2, totalSeconds >= 3600.0, true)}";
+            var ft = new FormattedText(
+                rangeText,
+                CultureInfo.InvariantCulture,
+                FlowDirection.LeftToRight,
+                _labelTypeface,
+                10.5,
+                _textPrimaryBrush);
+
+            double badgeW = ft.Width + 10.0;
+            double badgeH = ft.Height + 4.0;
+            double badgeX = Math.Clamp(x1 + ((selWidth - badgeW) / 2.0), 4.0, Math.Max(4.0, width - badgeW - 4.0));
+            double badgeY = FilmstripTop + 4.0;
+
+            dc.DrawRectangle(_zoomRangeBadgeBrush, _zoomRangeBorderPen, new Rect(badgeX, badgeY, badgeW, badgeH), 3.0, 3.0);
+            dc.DrawText(ft, new Point(badgeX + 5.0, badgeY + 2.0));
+        }
+    }
+
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
     {
         base.OnPointerWheelChanged(e);
@@ -1127,6 +1271,25 @@ public sealed class TimelineControl : Control
             return;
         }
 
+        // 0. Ctrl + maintenir clic + glisser = balayage de zoom sur une periode
+        if ((_lastKeyModifiers & KeyModifiers.Control) != 0)
+        {
+            _isSelectingZoomRange = true;
+            _zoomSelectStartX = Math.Clamp(pos.X, 0.0, Bounds.Width);
+            _zoomSelectStartSeconds = XToTime(pos.X).TotalSeconds;
+            _zoomSelectCurrentSeconds = _zoomSelectStartSeconds;
+            _lastDragX = pos.X;
+            _isHovering = true;
+            _hoverX = pos.X;
+
+            CapturePointer(e.Pointer);
+            Cursor = ResizeHorizontalCursor;
+            InvalidateVisual();
+            UpdateHoverPopup(pos, TimeSpan.FromSeconds(_zoomSelectStartSeconds));
+            e.Handled = true;
+            return;
+        }
+
         // 1. Priorite au hit-test des marqueurs
         int hitMarker = HitTestMarker(pos.X, pos.Y);
         if (hitMarker >= 0 && Segments is { Count: > 1 } segs && hitMarker < segs.Count - 1)
@@ -1184,6 +1347,17 @@ public sealed class TimelineControl : Control
         _lastKeyModifiers = e.KeyModifiers;
         _isHovering = true;
         _hoverX = pos.X;
+
+        if (_isSelectingZoomRange)
+        {
+            _lastDragX = pos.X;
+            TimeSpan sweepTime = XToTime(pos.X);
+            _zoomSelectCurrentSeconds = sweepTime.TotalSeconds;
+            UpdateEdgeScrollTimer(pos.X);
+            InvalidateVisual();
+            UpdateHoverPopup(pos, sweepTime);
+            return;
+        }
 
         if (_isDraggingMarker)
         {
@@ -1243,6 +1417,43 @@ public sealed class TimelineControl : Control
         }
 
         _lastKeyModifiers = e.KeyModifiers;
+
+        if (_isSelectingZoomRange)
+        {
+            _edgeScrollTimer.Stop();
+            Point upPos = e.GetPosition(this);
+            TimeSpan endSweepTime = XToTime(upPos.X);
+            double startSec = _zoomSelectStartSeconds;
+            double endSec = endSweepTime.TotalSeconds;
+            double pixelSpan = Math.Abs(upPos.X - _zoomSelectStartX);
+
+            _isSelectingZoomRange = false;
+            ReleasePointerCapture();
+
+            if (pixelSpan >= 6.0 && Math.Abs(endSec - startSec) >= 0.05)
+            {
+                ZoomToRange(startSec, endSec);
+            }
+
+            if (!IsPointerOver)
+            {
+                _isHovering = false;
+                _hoverPopup.Hide();
+                if (!Equals(Cursor, HandCursor))
+                {
+                    Cursor = HandCursor;
+                }
+            }
+            else
+            {
+                UpdateCursorForPoint(upPos);
+                UpdateHoverPopup(upPos, endSweepTime);
+            }
+
+            InvalidateVisual();
+            e.Handled = true;
+            return;
+        }
 
         if (_isDraggingMarker)
         {
@@ -1341,7 +1552,7 @@ public sealed class TimelineControl : Control
     {
         base.OnPointerExited(e);
 
-        if (!_isDragging && !_isDraggingMarker)
+        if (!_isDragging && !_isDraggingMarker && !_isSelectingZoomRange)
         {
             _isHovering = false;
             _hoverPopup.Hide();
@@ -1358,6 +1569,25 @@ public sealed class TimelineControl : Control
     {
         base.OnPointerCaptureLost(e);
         _capturedPointer = null;
+
+        if (_isSelectingZoomRange)
+        {
+            _edgeScrollTimer.Stop();
+            _isSelectingZoomRange = false;
+            if (!IsPointerOver)
+            {
+                _isHovering = false;
+                _hoverPopup.Hide();
+            }
+
+            if (!Equals(Cursor, HandCursor))
+            {
+                Cursor = HandCursor;
+            }
+
+            InvalidateVisual();
+            return;
+        }
 
         if (_isDraggingMarker)
         {
@@ -1497,7 +1727,7 @@ public sealed class TimelineControl : Control
 
     private void OnEdgeScrollTick(object? sender, EventArgs e)
     {
-        if ((!_isDragging && !(_isDraggingMarker && _hasMarkerDragMoved))
+        if ((!_isDragging && !_isSelectingZoomRange && !(_isDraggingMarker && _hasMarkerDragMoved))
             || Bounds.Width <= 0
             || PixelsPerSecond <= 0
             || GetTotalSeconds() <= 0)
@@ -1531,6 +1761,15 @@ public sealed class TimelineControl : Control
             ViewportChanged?.Invoke(this, EventArgs.Empty);
         }
 
+        if (_isSelectingZoomRange)
+        {
+            TimeSpan sweepTime = XToTime(_lastDragX);
+            _zoomSelectCurrentSeconds = sweepTime.TotalSeconds;
+            InvalidateVisual();
+            UpdateHoverPopup(new Point(_lastDragX, FilmstripTop), sweepTime);
+            return;
+        }
+
         if (_isDraggingMarker)
         {
             TimeSpan previewTime = ComputeSnappedAndClampedMarkerTime(_lastDragX, _lastKeyModifiers);
@@ -1562,7 +1801,9 @@ public sealed class TimelineControl : Control
 
     private void UpdateHoverPopup(Point mousePosition, TimeSpan time)
     {
-        IImage? image = Thumbnails?.GetThumbnail(time);
+        IImage? image = RangeThumbnails is { IsReady: true } rp && rp.ContainsTime(time.TotalSeconds)
+            ? rp.GetThumbnail(time) ?? Thumbnails?.GetThumbnail(time)
+            : Thumbnails?.GetThumbnail(time);
         _hoverPopup.Update(this, mousePosition, time, image, Duration);
     }
 
@@ -1709,6 +1950,9 @@ public sealed class TimelineControl : Control
         _markerSelectedPen = new ImmutablePen(_markerSelectedBrush, 2.5);
         _markerHandleOutlinePen = new ImmutablePen(_backgroundBrush, 1.0);
         _pendingStartPen = new ImmutablePen(_pendingStartBrush, 2.0);
+        _zoomRangeFillBrush = new ImmutableSolidColorBrush(Color.FromArgb(0x48, 0x3B, 0x82, 0xF6));
+        _zoomRangeBadgeBrush = new ImmutableSolidColorBrush(Color.FromArgb(0xE6, 0x1A, 0x1D, 0x23));
+        _zoomRangeBorderPen = new ImmutablePen(selectedBorderBrush, 1.5);
 
         IImmutableBrush hoverBrush = new ImmutableSolidColorBrush(Color.FromArgb(0x99, 0xED, 0xF0, 0xF5));
         _hoverPen = new ImmutablePen(hoverBrush, 1.0);

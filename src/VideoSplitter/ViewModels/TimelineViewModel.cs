@@ -5,7 +5,7 @@ namespace VideoSplitter.ViewModels;
 
 public sealed partial class TimelineViewModel : ObservableObject
 {
-    public const double MaxPixelsPerSecond = 500.0;
+    public const double MaxPixelsPerSecond = 2000.0;
     public const double ButtonZoomFactor = 1.5;
 
     [ObservableProperty]
@@ -17,16 +17,24 @@ public sealed partial class TimelineViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ZoomLabel))]
+    [NotifyPropertyChangedFor(nameof(IsZoomed))]
     private bool _isFitToWindow = true;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsZoomed))]
+    private bool _isRangeZoomActive;
+
+    [ObservableProperty]
     private bool _followPlayback = true;
+
+    public bool IsZoomed => !IsFitToWindow || IsRangeZoomActive;
 
     public string ZoomLabel => IsFitToWindow
         ? $"Ajuste ({FormatZoomRate(PixelsPerSecond)})"
         : FormatZoomRate(PixelsPerSecond);
 
     public event EventHandler<double>? ZoomStepRequested;
+    public event EventHandler? RangeZoomCleared;
 
     partial void OnPixelsPerSecondChanged(double value)
     {
@@ -42,6 +50,15 @@ public sealed partial class TimelineViewModel : ObservableObject
         if (value < 0.0 || double.IsNaN(value))
         {
             ScrollOffsetSeconds = 0.0;
+        }
+    }
+
+    partial void OnIsFitToWindowChanged(bool value)
+    {
+        if (value && IsRangeZoomActive)
+        {
+            IsRangeZoomActive = false;
+            RangeZoomCleared?.Invoke(this, EventArgs.Empty);
         }
     }
 
@@ -62,13 +79,23 @@ public sealed partial class TimelineViewModel : ObservableObject
     [RelayCommand]
     private void FitToWindow()
     {
+        IsRangeZoomActive = false;
         IsFitToWindow = true;
+        RangeZoomCleared?.Invoke(this, EventArgs.Empty);
+    }
+
+    [RelayCommand]
+    private void ExitZoom()
+    {
+        FitToWindow();
     }
 
     public void ResetForNewMedia()
     {
         ScrollOffsetSeconds = 0.0;
+        IsRangeZoomActive = false;
         IsFitToWindow = true;
+        RangeZoomCleared?.Invoke(this, EventArgs.Empty);
     }
 
     private static string FormatZoomRate(double pps)

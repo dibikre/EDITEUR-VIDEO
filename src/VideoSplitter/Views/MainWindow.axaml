@@ -175,6 +175,7 @@
                                     VerticalAlignment="Center">
                             <StackPanel Orientation="Horizontal"
                                         VerticalAlignment="Center"
+                                        IsVisible="{Binding Settings.ShowVolumeGauge}"
                                         Margin="0,0,16,0">
                                 <Button Content="{Binding Player.IsMuted, Converter={StaticResource BoolToTextConverter}, ConverterParameter=Muet|Son}"
                                         Command="{Binding Player.ToggleMuteCommand}"
@@ -186,7 +187,6 @@
                                         Value="{Binding Player.Volume, Mode=TwoWay}"
                                         Focusable="False"
                                         IsEnabled="{Binding Player.IsMediaLoaded}"
-                                        IsVisible="{Binding Settings.ShowVolumeGauge}"
                                         Margin="8,0,0,0" />
                             </StackPanel>
 
@@ -229,6 +229,7 @@
                                        IsPlaying="{Binding Player.IsPlaying}"
                                        PlaybackSpeed="{Binding Player.Speed}"
                                        Thumbnails="{Binding Player.Thumbnails}"
+                                       RangeThumbnails="{Binding Player.RangeThumbnails}"
                                        Timeline="{Binding Timeline}"
                                        Edit="{Binding Edit}"
                                        SeekRequested="OnSeekBarSeekRequested"
@@ -238,7 +239,9 @@
                                        SegmentSelectionRequested="OnTimelineSegmentSelectionRequested"
                                        MarkerSelectionRequested="OnTimelineMarkerSelectionRequested"
                                        BoundaryDragPreview="OnTimelineBoundaryDragPreview"
-                                       BoundaryDragCompleted="OnTimelineBoundaryDragCompleted" />
+                                       BoundaryDragCompleted="OnTimelineBoundaryDragCompleted"
+                                       RangeZoomSelected="OnTimelineRangeZoomSelected"
+                                       RangeZoomCleared="OnTimelineRangeZoomCleared" />
             </Border>
 
             <!-- 5. Panneau du bas (mode paysage par defaut) -->
@@ -362,7 +365,7 @@
                             CornerRadius="4"
                             Padding="10">
                     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                        <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto"
+                        <Grid RowDefinitions="Auto,Auto,Auto,Auto"
                               ColumnDefinitions="72,*">
                             <TextBlock Grid.Row="0" Grid.ColumnSpan="2"
                                        Text="OPTIONS D'EXPORT"
@@ -423,25 +426,7 @@
                                            Margin="8,0,0,0" />
                             </Grid>
 
-                            <!-- Modele de nom -->
-                            <TextBlock Grid.Row="3" Grid.Column="0"
-                                       Text="Modèle :"
-                                       Classes="muted"
-                                       Margin="0,0,0,6" />
-                            <TextBox Grid.Row="3" Grid.Column="1"
-                                     Text="{Binding Export.FileNamePattern, Mode=TwoWay}"
-                                     ToolTip.Tip="Jetons : {nom} (fichier source), {NN} (numéro), {debut} (hh-mm-ss), {segment} (nom du segment)"
-                                     Margin="0,0,0,6" />
-
-                            <TextBlock Grid.Row="4" Grid.Column="1"
-                                       Text="{Binding Export.PreviewFileName}"
-                                       Classes="muted"
-                                       FontSize="11"
-                                       TextTrimming="CharacterEllipsis"
-                                       ToolTip.Tip="{Binding Export.PreviewFileName}"
-                                       Margin="0,0,0,6" />
-
-                            <TextBlock Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2"
+                            <TextBlock Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2"
                                        Text="{Binding Settings.ExportSummaryText}"
                                        Classes="muted"
                                        FontSize="11"
@@ -460,10 +445,11 @@
                             CornerRadius="4"
                             Padding="10">
                     <Grid RowDefinitions="Auto,Auto,*,Auto">
-                        <DockPanel Grid.Row="0" Margin="0,0,0,6">
+                        <DockPanel Grid.Row="0" LastChildFill="False" Margin="0,0,0,6">
                             <TextBlock DockPanel.Dock="Left"
                                        Text="PROGRESSION"
                                        Classes="section-title"
+                                       VerticalAlignment="Center"
                                        Margin="0" />
                             <Panel DockPanel.Dock="Right">
                                 <Button Classes="primary"

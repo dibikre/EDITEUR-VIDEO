@@ -520,6 +520,16 @@ public partial class MainWindow : Window
         _viewModel.Player.SeekFromBar(e.Time, isFinal: true);
     }
 
+    private void OnTimelineRangeZoomSelected(object? sender, (double StartSeconds, double EndSeconds, double ViewportWidth) e)
+    {
+        _viewModel.Player.RequestRangeThumbnails(e.StartSeconds, e.EndSeconds, e.ViewportWidth);
+    }
+
+    private void OnTimelineRangeZoomCleared(object? sender, EventArgs e)
+    {
+        _viewModel.Player.ClearRangeThumbnails();
+    }
+
     private void OnSegmentsListPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         _mouseDownAlreadySelectedRow = null;

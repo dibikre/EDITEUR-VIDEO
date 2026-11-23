@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using VideoSplitter.Export;
 using VideoSplitter.Models;
 
 namespace VideoSplitter.Services;
@@ -78,6 +79,9 @@ public sealed class SettingsService : ISettingsService
             ? raw.OutputFolderMode
             : OutputFolderMode.SameAsSource;
         string customFolder = raw.CustomOutputFolder?.Trim() ?? string.Empty;
+        string fileNamePattern = string.IsNullOrWhiteSpace(raw.FileNamePattern)
+            ? ExportPlanner.DefaultPattern
+            : raw.FileNamePattern.Trim();
 
         if (folderMode == OutputFolderMode.CustomFolder && string.IsNullOrWhiteSpace(customFolder))
         {
@@ -89,6 +93,7 @@ public sealed class SettingsService : ISettingsService
             ExportMode = mode,
             OutputFolderMode = folderMode,
             CustomOutputFolder = customFolder,
+            FileNamePattern = fileNamePattern,
             ShowVolumeGauge = raw.ShowVolumeGauge
         };
     }

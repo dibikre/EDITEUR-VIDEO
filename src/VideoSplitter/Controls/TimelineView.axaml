@@ -113,7 +113,16 @@
                           IsChecked="{Binding #RootTimelineView.Timeline.FollowPlayback, Mode=TwoWay}"
                           Focusable="False"
                           VerticalAlignment="Center"
-                          Margin="0,0,0,2" />
+                          Margin="0,0,8,2" />
+                <Button Content="Sortir du zoom"
+                        Command="{Binding #RootTimelineView.Timeline.ExitZoomCommand}"
+                        IsVisible="{Binding #RootTimelineView.Timeline.IsZoomed}"
+                        BorderBrush="{StaticResource AccentBrush}"
+                        Focusable="False"
+                        Padding="8,3"
+                        MinHeight="26"
+                        ToolTip.Tip="Revenir à la vue complète de la vidéo (Ctrl+0)"
+                        Margin="0,0,0,2" />
             </WrapPanel>
         </DockPanel>
 
@@ -128,9 +137,11 @@
                                       IsPlaying="{Binding #RootTimelineView.IsPlaying}"
                                       PlaybackSpeed="{Binding #RootTimelineView.PlaybackSpeed}"
                                       Thumbnails="{Binding #RootTimelineView.Thumbnails}"
+                                      RangeThumbnails="{Binding #RootTimelineView.RangeThumbnails}"
                                       PixelsPerSecond="{Binding #RootTimelineView.Timeline.PixelsPerSecond, Mode=TwoWay}"
                                       ScrollOffsetSeconds="{Binding #RootTimelineView.Timeline.ScrollOffsetSeconds, Mode=TwoWay}"
                                       IsFitToWindow="{Binding #RootTimelineView.Timeline.IsFitToWindow, Mode=TwoWay}"
+                                      IsRangeZoomActive="{Binding #RootTimelineView.Timeline.IsRangeZoomActive, Mode=TwoWay}"
                                       FollowPlayback="{Binding #RootTimelineView.Timeline.FollowPlayback, Mode=OneWay}"
                                       Segments="{Binding #RootTimelineView.Edit.Segments, Mode=OneWay}"
                                       SelectedSegmentId="{Binding #RootTimelineView.Edit.SelectedSegmentId, Mode=OneWay}"
@@ -146,7 +157,8 @@
                                       MarkerSelectionRequested="OnTimelineMarkerSelectionRequested"
                                       BoundaryDragPreview="OnTimelineBoundaryDragPreview"
                                       BoundaryDragCompleted="OnTimelineBoundaryDragCompleted"
-                                      ViewportChanged="OnTimelineViewportChanged" />
+                                      ViewportChanged="OnTimelineViewportChanged"
+                                      RangeZoomSelected="OnTimelineRangeZoomSelected" />
         </Border>
 
         <!-- Barre de defilement horizontale synchronisee -->

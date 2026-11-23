@@ -10,16 +10,16 @@
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False">
 
-    <Border Background="{StaticResource SurfaceBrush}" Padding="18">
-        <StackPanel Spacing="14">
+    <Border Background="{StaticResource SurfaceBrush}" Padding="16">
+        <StackPanel Spacing="10">
             <!-- Mode d'export -->
             <Border x:Name="ExportModeSectionBorder"
                     Background="{StaticResource WindowBackgroundBrush}"
                     BorderBrush="{StaticResource BorderBrush}"
                     BorderThickness="1"
                     CornerRadius="4"
-                    Padding="12">
-                <StackPanel Spacing="6">
+                    Padding="10">
+                <StackPanel Spacing="5">
                     <TextBlock Text="MODE D'EXPORT" Classes="section-title" />
 
                     <RadioButton Content="Rapide (par défaut)"
@@ -28,7 +28,7 @@
                                  Focusable="False" />
                     <TextBlock Text="Sans perte de qualité, coupe sur keyframe, quasi instantané."
                                Classes="muted"
-                               Margin="24,-2,0,4"
+                               Margin="24,-2,0,2"
                                TextWrapping="Wrap" />
 
                     <RadioButton Content="Précis"
@@ -48,8 +48,8 @@
                     BorderBrush="{StaticResource BorderBrush}"
                     BorderThickness="1"
                     CornerRadius="4"
-                    Padding="12">
-                <StackPanel Spacing="6">
+                    Padding="10">
+                <StackPanel Spacing="5">
                     <TextBlock Text="ENREGISTREMENT DE LA SORTIE FINALE" Classes="section-title" />
 
                     <RadioButton Content="Même dossier que la vidéo source (par défaut)"
@@ -90,16 +90,40 @@
                 </StackPanel>
             </Border>
 
+            <!-- Format du titre / nom de fichier -->
+            <Border x:Name="FileNamePatternSectionBorder"
+                    Background="{StaticResource WindowBackgroundBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="10">
+                <StackPanel Spacing="5" IsEnabled="{Binding !IsOverwriteSource}">
+                    <TextBlock Text="FORMAT DU NOM DE FICHIER" Classes="section-title" />
+
+                    <TextBox Text="{Binding FileNamePattern, Mode=TwoWay}"
+                             ToolTip.Tip="Jetons : {nom} (fichier source), {NN} (numéro), {debut} (hh-mm-ss), {segment} (nom du segment)" />
+                    <TextBlock Text="{Binding FileNamePreviewText}"
+                               Classes="muted"
+                               FontSize="11"
+                               TextTrimming="CharacterEllipsis"
+                               ToolTip.Tip="{Binding FileNamePreviewText}" />
+                    <TextBlock Text="Jetons : {nom} (source), {NN} (numéro), {debut} (hh-mm-ss), {segment} (segment)"
+                               Classes="muted"
+                               FontSize="11"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
             <!-- Interface lecteur -->
             <Border Background="{StaticResource WindowBackgroundBrush}"
                     BorderBrush="{StaticResource BorderBrush}"
                     BorderThickness="1"
                     CornerRadius="4"
-                    Padding="12">
-                <StackPanel Spacing="6">
+                    Padding="10">
+                <StackPanel Spacing="5">
                     <TextBlock Text="LECTEUR AUDIO" Classes="section-title" />
 
-                    <CheckBox Content="Afficher la jauge de son (par défaut)"
+                    <CheckBox Content="Afficher la jauge et le bouton son (par défaut)"
                               IsChecked="{Binding ShowVolumeGauge, Mode=TwoWay}"
                               Focusable="False" />
                 </StackPanel>

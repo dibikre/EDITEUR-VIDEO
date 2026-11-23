@@ -20,6 +20,7 @@ public partial class SettingsDialog : Window
         {
             ExportModeSectionBorder.IsEnabled = false;
             OutputFolderSectionBorder.IsEnabled = false;
+            FileNamePatternSectionBorder.IsEnabled = false;
             ExportLockHintText.IsVisible = true;
         }
     }

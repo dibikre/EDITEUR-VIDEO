@@ -37,6 +37,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _logger = logger;
 
         Export.Mode = Settings.ExportMode;
+        Export.FileNamePattern = Settings.FileNamePattern;
         Export.ConfigureOutputLocation(Settings.OutputFolderMode, Settings.CustomOutputFolder);
         Export.ConfigureOverwriteHooks(
             prepareOverwriteReleaseAsync: () => Player.ReleaseMediaForOverwriteAsync(),
@@ -91,6 +92,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
             Timeline.ResetForNewMedia();
 
+            Settings.UpdateMediaSample(Player.MediaInfo?.Path);
+
             if (Player.MediaInfo is { } openedMedia)
             {
                 Edit.OnVideoOpened(openedMedia);
@@ -123,6 +126,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         if (e.PropertyName == nameof(SettingsViewModel.ExportMode))
         {
             Export.Mode = Settings.ExportMode;
+        }
+        else if (e.PropertyName == nameof(SettingsViewModel.FileNamePattern))
+        {
+            Export.FileNamePattern = Settings.FileNamePattern;
         }
         else if (e.PropertyName is nameof(SettingsViewModel.OutputFolderMode) or nameof(SettingsViewModel.CustomOutputFolder))
         {
