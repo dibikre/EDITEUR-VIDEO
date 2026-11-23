@@ -11,6 +11,11 @@ public interface IExportQueue
         Action<int>? onJobStarted,
         Action<int, ExportResult>? onJobCompleted,
         CancellationToken ct);
+
+    Task<ExportResult> RunSingleVideoAsync(
+        SingleVideoExportJob job,
+        IProgress<ExportProgress> progress,
+        CancellationToken ct);
 }
 
 public sealed class ExportQueue : IExportQueue
@@ -20,6 +25,14 @@ public sealed class ExportQueue : IExportQueue
     public ExportQueue(IExportService exportService)
     {
         _exportService = exportService;
+    }
+
+    public Task<ExportResult> RunSingleVideoAsync(
+        SingleVideoExportJob job,
+        IProgress<ExportProgress> progress,
+        CancellationToken ct)
+    {
+        return Task.Run(() => _exportService.ExportSingleVideoAsync(job, progress, ct), CancellationToken.None);
     }
 
     public async Task<IReadOnlyList<ExportResult>> RunAsync(

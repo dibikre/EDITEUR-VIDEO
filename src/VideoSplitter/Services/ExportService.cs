@@ -19,11 +19,15 @@ public sealed class ExportService : IExportService
 
     private readonly IAppLogger _logger;
     private readonly string _ffmpegPath;
+    private readonly SingleVideoExportRunner _singleVideoRunner;
 
     public ExportService(IAppLogger logger)
     {
         _logger = logger;
-        _ffmpegPath = Path.Combine(AppContext.BaseDirectory, "Assets", "ffmpeg", "ffmpeg.exe");
+        string ffmpegDir = Path.Combine(AppContext.BaseDirectory, "Assets", "ffmpeg");
+        _ffmpegPath = Path.Combine(ffmpegDir, "ffmpeg.exe");
+        string ffprobePath = Path.Combine(ffmpegDir, "ffprobe.exe");
+        _singleVideoRunner = new SingleVideoExportRunner(_logger, _ffmpegPath, ffprobePath, ExportAsync);
     }
 
     public async Task<ExportResult> ExportAsync(
@@ -70,6 +74,14 @@ public sealed class ExportService : IExportService
         }
 
         return firstAttempt;
+    }
+
+    public Task<ExportResult> ExportSingleVideoAsync(
+        SingleVideoExportJob job,
+        IProgress<ExportProgress> progress,
+        CancellationToken ct)
+    {
+        return _singleVideoRunner.RunAsync(job, progress, ct);
     }
 
     private async Task<ExportResult> RunAttemptAsync(
@@ -218,7 +230,7 @@ public sealed class ExportService : IExportService
             stopwatch.Elapsed);
     }
 
-    private static void HandleProgressLine(
+    internal static void HandleProgressLine(
         string line,
         Guid segmentId,
         double segmentDurationUs,
@@ -272,7 +284,7 @@ public sealed class ExportService : IExportService
         }
     }
 
-    private static void TrySetBelowNormalPriority(int processId)
+    internal static void TrySetBelowNormalPriority(int processId)
     {
         try
         {
@@ -285,7 +297,7 @@ public sealed class ExportService : IExportService
         }
     }
 
-    private static bool TryGetNonEmptyFileLength(string path, out long length)
+    internal static bool TryGetNonEmptyFileLength(string path, out long length)
     {
         length = 0;
         try
@@ -305,7 +317,7 @@ public sealed class ExportService : IExportService
         }
     }
 
-    private async Task DeletePartFileWithRetriesAsync(string partPath)
+    internal static async Task DeleteFileWithRetriesAsync(string partPath, IAppLogger logger)
     {
         for (int attempt = 0; attempt < DeleteRetryCount; attempt++)
         {
@@ -321,18 +333,21 @@ public sealed class ExportService : IExportService
             }
             catch (Exception ex) when (attempt < DeleteRetryCount - 1)
             {
-                _logger.Warn($"Nouvelle tentative de suppression de '{partPath}' ({attempt + 1}/{DeleteRetryCount}) : {ex.Message}");
+                logger.Warn($"Nouvelle tentative de suppression de '{partPath}' ({attempt + 1}/{DeleteRetryCount}) : {ex.Message}");
                 await Task.Delay(DeleteRetryDelayMs, CancellationToken.None).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                _logger.Warn($"Impossible de supprimer le fichier partiel '{partPath}' : {ex.Message}");
+                logger.Warn($"Impossible de supprimer le fichier partiel '{partPath}' : {ex.Message}");
                 return;
             }
         }
     }
 
-    private static string TranslateStderrToFrench(string stderr, int exitCode, ExportMode mode)
+    private Task DeletePartFileWithRetriesAsync(string partPath)
+        => DeleteFileWithRetriesAsync(partPath, _logger);
+
+    internal static string TranslateStderrToFrench(string stderr, int exitCode, ExportMode mode)
     {
         if (stderr.Contains("No space left on device", StringComparison.OrdinalIgnoreCase))
         {

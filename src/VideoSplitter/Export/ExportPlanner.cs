@@ -64,6 +64,78 @@ public static class ExportPlanner
         return SanitizeComponent(rawName, fallback: $"video_part{nn}");
     }
 
+    public static string BuildSingleVideoFileName(
+        string pattern,
+        string sourceName,
+        IReadOnlyList<Segment> segments)
+    {
+        string safeSource = SanitizeComponent(sourceName, fallback: "video");
+        string effectivePattern = string.IsNullOrWhiteSpace(pattern) ? DefaultPattern : pattern.Trim();
+
+        if (string.Equals(effectivePattern, DefaultPattern, StringComparison.Ordinal))
+        {
+            return SanitizeComponent($"{safeSource}_complet", fallback: "video_complet");
+        }
+
+        Segment firstSegment = segments.Count > 0
+            ? segments[0]
+            : new Segment(Guid.Empty, TimeSpan.Zero, TimeSpan.Zero, true, "Complet");
+
+        string startFormatted = FormatStartTime(firstSegment.Start);
+        string safeSegment = SanitizeComponent(firstSegment.Name, fallback: "Complet");
+
+        string rawName = effectivePattern
+            .Replace("_part{NN}", string.Empty, StringComparison.Ordinal)
+            .Replace("-part{NN}", string.Empty, StringComparison.Ordinal)
+            .Replace("_{NN}", string.Empty, StringComparison.Ordinal)
+            .Replace("-{NN}", string.Empty, StringComparison.Ordinal)
+            .Replace("{NN}", string.Empty, StringComparison.Ordinal)
+            .Replace("{nom}", safeSource, StringComparison.Ordinal)
+            .Replace("{debut}", startFormatted, StringComparison.Ordinal)
+            .Replace("{segment}", safeSegment, StringComparison.Ordinal)
+            .Trim(' ', '_', '-');
+
+        if (string.IsNullOrWhiteSpace(rawName)
+            || string.Equals(rawName, safeSource, StringComparison.OrdinalIgnoreCase))
+        {
+            rawName = $"{safeSource}_complet";
+        }
+
+        return SanitizeComponent(rawName, fallback: $"{safeSource}_complet");
+    }
+
+    public static string BuildSingleVideoOutputPath(
+        string outputFolder,
+        string pattern,
+        string sourceName,
+        string sourceExtension,
+        IReadOnlyList<Segment> segments,
+        ExportMode mode)
+    {
+        string ext = ResolveOutputExtension(sourceExtension, mode);
+        string baseStem = BuildSingleVideoFileName(pattern, sourceName, segments);
+        string truncatedStem = TruncateStemForPathLimit(outputFolder, baseStem, ext, 1, 1);
+        return Path.Combine(outputFolder, truncatedStem + ext);
+    }
+
+    public static (string OutputPath, bool IsSkipped) ResolveSingleVideoConflict(
+        string outputPath,
+        ConflictPolicy policy)
+    {
+        if (!File.Exists(outputPath))
+        {
+            return (outputPath, false);
+        }
+
+        return policy switch
+        {
+            ConflictPolicy.Overwrite => (outputPath, false),
+            ConflictPolicy.Skip => (outputPath, true),
+            ConflictPolicy.AutoRename => (FindUniquePath(outputPath, new HashSet<string>(StringComparer.OrdinalIgnoreCase)), false),
+            _ => (outputPath, false)
+        };
+    }
+
     public static string BuildFullOutputPath(
         string outputFolder,
         string pattern,
@@ -219,6 +291,39 @@ public static class ExportPlanner
 
     public static long EstimateRequiredBytes(MediaInfo media, IReadOnlyList<ExportJob> jobs)
     {
+        double includedSeconds = 0.0;
+        for (int i = 0; i < jobs.Count; i++)
+        {
+            if (!jobs[i].IsSkipped)
+            {
+                includedSeconds += Math.Max(0.0, jobs[i].Segment.Duration.TotalSeconds);
+            }
+        }
+
+        return EstimateRequiredBytesFromSeconds(media, includedSeconds);
+    }
+
+    public static long EstimateRequiredBytes(MediaInfo media, IReadOnlyList<Segment> segments)
+    {
+        double includedSeconds = 0.0;
+        for (int i = 0; i < segments.Count; i++)
+        {
+            if (segments[i].Enabled)
+            {
+                includedSeconds += Math.Max(0.0, segments[i].Duration.TotalSeconds);
+            }
+        }
+
+        return EstimateRequiredBytesFromSeconds(media, includedSeconds);
+    }
+
+    private static long EstimateRequiredBytesFromSeconds(MediaInfo media, double includedSeconds)
+    {
+        if (includedSeconds <= 0.0 || media.Duration <= TimeSpan.Zero)
+        {
+            return 0L;
+        }
+
         long sourceBytes;
         try
         {
@@ -230,21 +335,7 @@ public static class ExportPlanner
             return 0L;
         }
 
-        if (sourceBytes <= 0 || media.Duration <= TimeSpan.Zero)
-        {
-            return 0L;
-        }
-
-        double includedSeconds = 0.0;
-        for (int i = 0; i < jobs.Count; i++)
-        {
-            if (!jobs[i].IsSkipped)
-            {
-                includedSeconds += Math.Max(0.0, jobs[i].Segment.Duration.TotalSeconds);
-            }
-        }
-
-        if (includedSeconds <= 0.0)
+        if (sourceBytes <= 0)
         {
             return 0L;
         }

@@ -383,7 +383,8 @@ function runSingleExport(
       );
     }
 
-    const format = session.ext.replace('.', '') || 'mp4';
+    const outExt = job.mode === 'precise' ? '.mp4' : session.ext;
+    const format = outExt.replace('.', '').toLowerCase() || 'mp4';
     args.push('-f', format === 'mkv' ? 'matroska' : format, '-progress', 'pipe:1', '-nostats', partPath);
 
     segState.status = 'running';

@@ -6,6 +6,12 @@ public enum ExportMode
     Precise
 }
 
+public enum ExportOutputType
+{
+    SeparateSegments,
+    SingleVideo
+}
+
 public enum EncoderKind
 {
     Cpu,
@@ -45,6 +51,18 @@ public sealed record ExportJob(
     Segment Segment,
     int Index,
     int Total,
+    string OutputPath,
+    ExportMode Mode,
+    EncoderKind Encoder,
+    int Crf,
+    bool AllowCpuFallback = false,
+    bool IsSkipped = false);
+
+public sealed record SingleVideoExportJob(
+    Guid JobId,
+    MediaInfo Media,
+    IReadOnlyList<Segment> Segments,
+    IReadOnlyList<double> Keyframes,
     string OutputPath,
     ExportMode Mode,
     EncoderKind Encoder,

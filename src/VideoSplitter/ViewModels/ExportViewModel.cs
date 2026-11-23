@@ -58,7 +58,7 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
     private readonly List<string> _lastExportedFiles = [];
 
     private Func<(MediaInfo? Media, IReadOnlyList<Segment> Segments, IReadOnlyList<double> Keyframes)>? _sourceProvider;
-    private Func<int, bool, Task<FastCutWarningChoice>>? _fastCutWarningPrompt;
+    private Func<int, bool, bool, Task<FastCutWarningChoice>>? _fastCutWarningPrompt;
     private Func<IReadOnlyList<string>, Task<ConflictPolicy?>>? _conflictPrompt;
     private Func<string, Task<bool>>? _confirmContinuePrompt;
     private Func<string, Task>? _errorPrompt;
@@ -111,12 +111,16 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(TaskbarProgressState))]
+    [NotifyPropertyChangedFor(nameof(CanStartExport))]
     [NotifyCanExecuteChangedFor(
-        nameof(ExportCommand),
+        nameof(ExportSeparateSegmentsCommand),
+        nameof(ExportSingleVideoCommand),
         nameof(CancelCommand),
         nameof(BrowseFolderCommand),
         nameof(OpenOutputFolderCommand))]
     private bool _isExporting;
+
+    public bool CanStartExport => !IsExporting && _currentMedia is not null && _hasEnabledSegments;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(GlobalProgressPercentText))]
@@ -195,7 +199,7 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
 
     public void ConfigureBridges(
         Func<(MediaInfo? Media, IReadOnlyList<Segment> Segments, IReadOnlyList<double> Keyframes)> sourceProvider,
-        Func<int, bool, Task<FastCutWarningChoice>> fastCutWarningPrompt,
+        Func<int, bool, bool, Task<FastCutWarningChoice>> fastCutWarningPrompt,
         Func<IReadOnlyList<string>, Task<ConflictPolicy?>> conflictPrompt,
         Func<string, Task<bool>> confirmContinuePrompt,
         Func<string, Task> errorPrompt,
@@ -239,7 +243,9 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
 
         _hasEnabledSegments = anyEnabled;
         OnPropertyChanged(nameof(PreviewFileName));
-        ExportCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(CanStartExport));
+        ExportSeparateSegmentsCommand.NotifyCanExecuteChanged();
+        ExportSingleVideoCommand.NotifyCanExecuteChanged();
     }
 
     public void ClearTransientErrorState()
@@ -320,8 +326,13 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
         }
     }
 
-    [RelayCommand(CanExecute = nameof(CanExport))]
-    private async Task ExportAsync()
+    [RelayCommand(CanExecute = nameof(CanStartExport))]
+    private Task ExportSeparateSegmentsAsync() => ExportCoreAsync(ExportOutputType.SeparateSegments);
+
+    [RelayCommand(CanExecute = nameof(CanStartExport))]
+    private Task ExportSingleVideoAsync() => ExportCoreAsync(ExportOutputType.SingleVideo);
+
+    private async Task ExportCoreAsync(ExportOutputType outputType)
     {
         (MediaInfo? media, IReadOnlyList<Segment> segmentsSnapshot, IReadOnlyList<double> keyframesSnapshot) =
             GetSourceSnapshot();
@@ -371,13 +382,14 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
         (EncoderKind resolvedEncoder, bool allowCpuFallback) = ResolveEncoderChoice();
         HashSet<Guid>? preciseOverrideIds = null;
         ExportMode batchDefaultMode = Mode;
+        bool allowPerSegmentPrecise = outputType == ExportOutputType.SeparateSegments;
 
         if (Mode == ExportMode.Fast)
         {
             if (keyframesSnapshot.Count == 0)
             {
                 FastCutWarningChoice choice = _fastCutWarningPrompt is not null
-                    ? await _fastCutWarningPrompt.Invoke(0, true)
+                    ? await _fastCutWarningPrompt.Invoke(0, true, allowPerSegmentPrecise)
                     : FastCutWarningChoice.FastAnyway;
                 if (choice == FastCutWarningChoice.Cancel)
                 {
@@ -399,7 +411,7 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
                 if (outOfKf.Count > 0)
                 {
                     FastCutWarningChoice choice = _fastCutWarningPrompt is not null
-                        ? await _fastCutWarningPrompt.Invoke(outOfKf.Count, false)
+                        ? await _fastCutWarningPrompt.Invoke(outOfKf.Count, false, allowPerSegmentPrecise)
                         : FastCutWarningChoice.FastAnyway;
 
                     switch (choice)
@@ -408,7 +420,14 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
                             return;
 
                         case FastCutWarningChoice.PreciseForOutOfKeyframe:
-                            preciseOverrideIds = outOfKf;
+                            if (allowPerSegmentPrecise)
+                            {
+                                preciseOverrideIds = outOfKf;
+                            }
+                            else
+                            {
+                                batchDefaultMode = ExportMode.Precise;
+                            }
                             break;
 
                         case FastCutWarningChoice.AllPrecise:
@@ -417,6 +436,18 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
                     }
                 }
             }
+        }
+
+        if (outputType == ExportOutputType.SingleVideo)
+        {
+            await PrepareAndExecuteSingleVideoAsync(
+                media,
+                enabledSegments,
+                keyframesSnapshot,
+                batchDefaultMode,
+                resolvedEncoder,
+                allowCpuFallback);
+            return;
         }
 
         List<ExportJob> jobs = BuildExportJobs(
@@ -429,30 +460,9 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
 
         // 3. Verification de l'espace disque disponible
         long requiredBytes = ExportPlanner.EstimateRequiredBytes(media, jobs);
-        long? freeBytes = ExportPlanner.GetAvailableFreeSpaceBytes(OutputFolder);
-        if (freeBytes is long available && requiredBytes > available)
+        if (!await CheckDiskSpaceAsync(requiredBytes, jobs.Any(j => j.Mode == ExportMode.Precise)))
         {
-            bool hasPrecise = jobs.Any(j => j.Mode == ExportMode.Precise);
-            string neededMb = FormatSizeMb(requiredBytes);
-            string freeMb = FormatSizeMb(available);
-
-            if (!hasPrecise)
-            {
-                if (_errorPrompt is not null)
-                {
-                    await _errorPrompt.Invoke(
-                        $"Espace disque insuffisant dans le dossier de sortie.\n\nRequis estimé : {neededMb}\nDisponible : {freeMb}");
-                }
-                return;
-            }
-
-            bool proceedLowSpace = _confirmContinuePrompt is not null
-                && await _confirmContinuePrompt.Invoke(
-                    $"L'espace disque disponible semble faible par rapport à la taille estimée.\n\nRequis estimé : {neededMb}\nDisponible : {freeMb}\n\nContinuer l'export malgré tout ?");
-            if (!proceedLowSpace)
-            {
-                return;
-            }
+            return;
         }
 
         // 4. Detection des fichiers existants
@@ -483,7 +493,214 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
         await runTask;
     }
 
-    private bool CanExport() => !IsExporting && _currentMedia is not null && _hasEnabledSegments;
+    private async Task PrepareAndExecuteSingleVideoAsync(
+        MediaInfo media,
+        List<Segment> enabledSegments,
+        IReadOnlyList<double> keyframesSnapshot,
+        ExportMode effectiveMode,
+        EncoderKind resolvedEncoder,
+        bool allowCpuFallback)
+    {
+        string sourceName = Path.GetFileNameWithoutExtension(media.Path);
+        string sourceExt = Path.GetExtension(media.Path);
+        string outputPath = ExportPlanner.BuildSingleVideoOutputPath(
+            OutputFolder,
+            FileNamePattern,
+            sourceName,
+            sourceExt,
+            enabledSegments,
+            effectiveMode);
+
+        long requiredBytes = ExportPlanner.EstimateRequiredBytes(media, enabledSegments);
+        if (!await CheckDiskSpaceAsync(requiredBytes, effectiveMode == ExportMode.Precise))
+        {
+            return;
+        }
+
+        bool isSkipped = false;
+        if (File.Exists(outputPath))
+        {
+            ConflictPolicy? policy = _conflictPrompt is not null
+                ? await _conflictPrompt.Invoke([outputPath])
+                : ConflictPolicy.AutoRename;
+            if (policy is null)
+            {
+                return;
+            }
+
+            (outputPath, isSkipped) = ExportPlanner.ResolveSingleVideoConflict(outputPath, policy.Value);
+        }
+
+        var job = new SingleVideoExportJob(
+            JobId: Guid.NewGuid(),
+            Media: media,
+            Segments: enabledSegments,
+            Keyframes: keyframesSnapshot,
+            OutputPath: outputPath,
+            Mode: effectiveMode,
+            Encoder: resolvedEncoder,
+            Crf: Crf,
+            AllowCpuFallback: allowCpuFallback,
+            IsSkipped: isSkipped);
+
+        Task runTask = ExecuteSingleVideoExportAsync(job);
+        _activeExportTask = runTask;
+        await runTask;
+    }
+
+    private async Task<bool> CheckDiskSpaceAsync(long requiredBytes, bool hasPrecise)
+    {
+        long? freeBytes = ExportPlanner.GetAvailableFreeSpaceBytes(OutputFolder);
+        if (freeBytes is not long available || requiredBytes <= available)
+        {
+            return true;
+        }
+
+        string neededMb = FormatSizeMb(requiredBytes);
+        string freeMb = FormatSizeMb(available);
+
+        if (!hasPrecise)
+        {
+            if (_errorPrompt is not null)
+            {
+                await _errorPrompt.Invoke(
+                    $"Espace disque insuffisant dans le dossier de sortie.\n\nRequis estimé : {neededMb}\nDisponible : {freeMb}");
+            }
+            return false;
+        }
+
+        return _confirmContinuePrompt is not null
+            && await _confirmContinuePrompt.Invoke(
+                $"L'espace disque disponible semble faible par rapport à la taille estimée.\n\nRequis estimé : {neededMb}\nDisponible : {freeMb}\n\nContinuer l'export malgré tout ?");
+    }
+
+    private async Task ExecuteSingleVideoExportAsync(SingleVideoExportJob job)
+    {
+        Items.Clear();
+        _lastExportedFiles.Clear();
+        Summary = string.Empty;
+        EstimatedRemaining = string.Empty;
+        GlobalProgress = 0.0;
+        HasExportErrors = false;
+
+        var item = new ExportItemViewModel(
+            job.JobId,
+            $"{job.Segments.Count} segment(s) fusionné(s)",
+            Path.GetFileName(job.OutputPath));
+
+        if (job.IsSkipped)
+        {
+            item.Status = ExportItemStatus.Ignore;
+            item.Message = "Ignoré (fichier existant)";
+            item.Fraction = 1.0;
+            Items.Add(item);
+            GlobalProgress = 1.0;
+            Summary = "Export ignoré (fichier existant)";
+            return;
+        }
+
+        item.Status = ExportItemStatus.EnCours;
+        item.Message = "En cours…";
+        Items.Add(item);
+
+        _exportCts?.Dispose();
+        _exportCts = new CancellationTokenSource();
+        CancellationToken ct = _exportCts.Token;
+
+        IsExporting = true;
+        var stopwatch = Stopwatch.StartNew();
+
+        try
+        {
+            SetThreadExecutionState(ExecutionState.EsContinuous | ExecutionState.EsSystemRequired);
+        }
+        catch
+        {
+            // Ignorer si SetThreadExecutionState echoue.
+        }
+
+        var progress = new Progress<ExportProgress>(p =>
+        {
+            if (_disposed || p.SegmentId != job.JobId)
+            {
+                return;
+            }
+
+            item.Fraction = p.Fraction;
+            GlobalProgress = Math.Clamp(p.Fraction, 0.0, 1.0);
+            if (job.Mode == ExportMode.Precise && GlobalProgress >= 0.02 && GlobalProgress < 0.999)
+            {
+                double elapsedSec = stopwatch.Elapsed.TotalSeconds;
+                double totalEstimatedSec = elapsedSec / GlobalProgress;
+                TimeSpan rem = TimeSpan.FromSeconds(Math.Max(0.0, totalEstimatedSec - elapsedSec));
+                EstimatedRemaining = $"reste ~ {(int)rem.TotalMinutes:D2}:{rem.Seconds:D2}";
+            }
+        });
+
+        try
+        {
+            ExportResult result = await _exportQueue.RunSingleVideoAsync(job, progress, ct);
+            stopwatch.Stop();
+
+            ApplyResultToItem(item, result);
+            if (result.Outcome == ExportOutcome.Success)
+            {
+                GlobalProgress = 1.0;
+                if (!string.IsNullOrEmpty(result.FinalPath))
+                {
+                    _lastExportedFiles.Add(result.FinalPath);
+                }
+
+                Summary = $"Vidéo unique exportée ({job.Segments.Count} segment(s), {result.Elapsed.TotalSeconds:F1} s)";
+            }
+            else if (result.Outcome == ExportOutcome.Cancelled)
+            {
+                Summary = "Export annulé";
+            }
+            else if (result.Outcome == ExportOutcome.Skipped)
+            {
+                GlobalProgress = 1.0;
+                Summary = "Export ignoré (fichier existant)";
+            }
+            else
+            {
+                HasExportErrors = true;
+                Summary = "Échec de l'export de la vidéo unique";
+            }
+
+            _logger.Info($"Export vidéo unique terminé : {Summary}");
+
+            if (!_disposed && result.Outcome != ExportOutcome.Cancelled)
+            {
+                try
+                {
+                    MessageBeep(MbIconAsterisk);
+                }
+                catch
+                {
+                    // Ignorer si aucun peripherique audio n'est disponible.
+                }
+            }
+        }
+        finally
+        {
+            try
+            {
+                SetThreadExecutionState(ExecutionState.EsContinuous);
+            }
+            catch
+            {
+                // Ignorer si SetThreadExecutionState echoue.
+            }
+
+            IsExporting = false;
+            EstimatedRemaining = string.Empty;
+            _activeExportTask = null;
+            _exportCts?.Dispose();
+            _exportCts = null;
+            OpenOutputFolderCommand.NotifyCanExecuteChanged();
+        }
+    }
 
     [RelayCommand(CanExecute = nameof(IsExporting))]
     private void Cancel()

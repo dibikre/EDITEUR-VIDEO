@@ -83,9 +83,9 @@ public partial class MainWindow : Window
 
         _viewModel.Export.ConfigureBridges(
             sourceProvider: () => (_viewModel.Player.MediaInfo, _viewModel.Edit.Segments, _viewModel.Edit.Keyframes),
-            fastCutWarningPrompt: async (outOfKeyframeCount, keyframesUnavailable) =>
+            fastCutWarningPrompt: async (outOfKeyframeCount, keyframesUnavailable, allowPerSegmentPrecise) =>
             {
-                var dialog = new FastCutWarningDialog(outOfKeyframeCount, keyframesUnavailable);
+                var dialog = new FastCutWarningDialog(outOfKeyframeCount, keyframesUnavailable, allowPerSegmentPrecise);
                 return await dialog.ShowDialog<FastCutWarningChoice>(this);
             },
             conflictPrompt: async conflictingPaths =>

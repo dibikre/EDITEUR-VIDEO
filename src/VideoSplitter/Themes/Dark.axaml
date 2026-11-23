@@ -134,6 +134,22 @@
         <Setter Property="Foreground" Value="{StaticResource DisabledTextBrush}" />
     </Style>
 
+    <Style Selector="Button.primary TextBlock">
+        <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+    </Style>
+
+    <Style Selector="Button.primary:disabled TextBlock">
+        <Setter Property="Foreground" Value="{StaticResource DisabledTextBrush}" />
+    </Style>
+
+    <Style Selector="Button.primary Path.dropdown-chevron">
+        <Setter Property="Stroke" Value="{StaticResource TextPrimaryBrush}" />
+    </Style>
+
+    <Style Selector="Button.primary:disabled Path.dropdown-chevron">
+        <Setter Property="Stroke" Value="{StaticResource DisabledTextBrush}" />
+    </Style>
+
     <Style Selector="Button.danger">
         <Setter Property="Background" Value="{StaticResource SurfaceElevatedBrush}" />
         <Setter Property="BorderBrush" Value="{StaticResource DangerBrush}" />
@@ -246,10 +262,18 @@
         <Setter Property="Padding" Value="8,5" />
     </Style>
 
-    <!-- ContextMenu & MenuItem -->
+    <!-- ContextMenu, FlyoutPresenter & MenuItem -->
     <Style Selector="ContextMenu">
         <Setter Property="Background" Value="{StaticResource SurfaceElevatedBrush}" />
         <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="Padding" Value="3" />
+    </Style>
+
+    <Style Selector="FlyoutPresenter">
+        <Setter Property="Background" Value="{StaticResource SurfaceElevatedBrush}" />
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="4" />
