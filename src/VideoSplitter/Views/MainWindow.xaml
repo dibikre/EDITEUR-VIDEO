@@ -184,8 +184,10 @@
                 <controls:SeekBar Grid.Row="1"
                                   Duration="{Binding Player.Duration}"
                                   Position="{Binding Player.Position}"
+                                  Thumbnails="{Binding Player.Thumbnails}"
                                   IsEnabled="{Binding Player.IsMediaLoaded}"
-                                  SeekRequested="OnSeekBarSeekRequested" />
+                                  SeekRequested="OnSeekBarSeekRequested"
+                                  SeekCompleted="OnSeekBarSeekCompleted" />
             </Grid>
         </Border>
 
@@ -291,8 +293,8 @@
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
                         <TextBlock Grid.Row="0" Text="PROGRESSION" Style="{StaticResource SectionTitleStyle}" />
-                        <ProgressBar Grid.Row="1" Minimum="0" Maximum="100" Value="0" Margin="0,4,0,6" />
-                        <TextBlock Grid.Row="2" Text="En attente" Style="{StaticResource MutedTextStyle}" />
+                        <ProgressBar Grid.Row="1" Minimum="0" Maximum="1" Value="{Binding Player.ThumbnailProgress, Mode=OneWay}" Margin="0,4,0,6" />
+                        <TextBlock Grid.Row="2" Text="{Binding Player.ThumbnailStatus}" Style="{StaticResource MutedTextStyle}" />
                         <Button Grid.Row="4" Content="Annuler l'export" IsEnabled="False" HorizontalAlignment="Right" />
                     </Grid>
                 </Border>

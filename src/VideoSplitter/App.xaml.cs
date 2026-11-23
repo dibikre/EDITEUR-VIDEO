@@ -39,6 +39,9 @@ public partial class App : Application
             MainWindow mainWindow = _serviceProvider.GetRequiredService<MainWindow>();
             MainWindow = mainWindow;
             mainWindow.Show();
+
+            ICacheService cacheService = _serviceProvider.GetRequiredService<ICacheService>();
+            _ = cacheService.CleanupAsync(TimeSpan.FromDays(30), CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -56,6 +59,8 @@ public partial class App : Application
         services.AddSingleton(_ => new LibVLC("--avcodec-hw=any", "--no-video-title-show"));
         services.AddSingleton(sp => new VlcMediaPlayer(sp.GetRequiredService<LibVLC>()));
         services.AddSingleton<IFfmpegService, FfmpegService>();
+        services.AddSingleton<ICacheService, CacheService>();
+        services.AddSingleton<IThumbnailService, ThumbnailService>();
 
         services.AddSingleton<PlayerViewModel>();
         services.AddSingleton<MainViewModel>();

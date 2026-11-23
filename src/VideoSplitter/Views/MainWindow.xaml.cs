@@ -60,7 +60,12 @@ public partial class MainWindow : Window
 
     private void OnSeekBarSeekRequested(object? sender, TimeSpan target)
     {
-        _viewModel.Player.SeekTo(target);
+        _viewModel.Player.SeekFromBar(target, isFinal: false);
+    }
+
+    private void OnSeekBarSeekCompleted(object? sender, TimeSpan target)
+    {
+        _viewModel.Player.SeekFromBar(target, isFinal: true);
     }
 
     private void OnWindowDragOver(object sender, DragEventArgs e)

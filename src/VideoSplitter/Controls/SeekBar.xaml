@@ -4,17 +4,10 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d"
-             d:DesignHeight="24"
-             d:DesignWidth="600">
-    <Slider x:Name="ProgressSlider"
-            Minimum="0"
-            Maximum="1"
-            Value="0"
-            IsMoveToPointEnabled="True"
-            Focusable="False"
-            SmallChange="0.04"
-            LargeChange="5"
-            ValueChanged="OnSliderValueChanged"
-            PreviewMouseLeftButtonDown="OnSliderPreviewMouseLeftButtonDown"
-            PreviewMouseLeftButtonUp="OnSliderPreviewMouseLeftButtonUp" />
-</UserControl>
+             Height="26"
+             Background="Transparent"
+             Cursor="Hand"
+             Focusable="False"
+             SnapsToDevicePixels="True"
+             d:DesignHeight="26"
+             d:DesignWidth="600" />

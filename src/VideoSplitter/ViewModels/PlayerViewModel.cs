@@ -12,6 +12,8 @@ namespace VideoSplitter.ViewModels;
 
 public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 {
+    private const long ScrubThrottleMilliseconds = 50;
+
     public static readonly string[] SupportedVideoExtensions =
     [
         ".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v", ".ts", ".wmv", ".flv", ".mpg"
@@ -20,13 +22,16 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     private readonly VlcMediaPlayer _mediaPlayer;
     private readonly LibVLC _libVlc;
     private readonly IFfmpegService _ffmpegService;
+    private readonly IThumbnailService _thumbnailService;
     private readonly IAppLogger _logger;
     private readonly Dispatcher _dispatcher;
 
     private CancellationTokenSource? _openCts;
+    private CancellationTokenSource? _thumbnailCts;
     private Media? _currentMedia;
     private int _pauseOnFirstPlay;
     private long _pendingSeekTargetMs = -1;
+    private long _lastScrubSeekTickMs;
     private bool _disposed;
 
     public IReadOnlyList<double> SpeedOptions { get; } = [0.5, 1.0, 1.5, 2.0];
@@ -72,17 +77,31 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private double _speed = 1.0;
 
+    [ObservableProperty]
+    private IThumbnailProvider? _thumbnails;
+
+    [ObservableProperty]
+    private bool _isGeneratingThumbnails;
+
+    [ObservableProperty]
+    private double _thumbnailProgress;
+
+    [ObservableProperty]
+    private string _thumbnailStatus = "En attente";
+
     public event EventHandler<string>? ErrorOccurred;
 
     public PlayerViewModel(
         VlcMediaPlayer mediaPlayer,
         LibVLC libVlc,
         IFfmpegService ffmpegService,
+        IThumbnailService thumbnailService,
         IAppLogger logger)
     {
         _mediaPlayer = mediaPlayer;
         _libVlc = libVlc;
         _ffmpegService = ffmpegService;
+        _thumbnailService = thumbnailService;
         _logger = logger;
         _dispatcher = Application.Current.Dispatcher;
 
@@ -148,6 +167,8 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         _openCts = new CancellationTokenSource();
         CancellationToken ct = _openCts.Token;
 
+        CancelThumbnailGeneration();
+
         IsLoading = true;
         _logger.Info($"Ouverture demandee : {path}");
 
@@ -182,6 +203,8 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
                 Interlocked.Exchange(ref _pauseOnFirstPlay, 0);
                 throw new InvalidOperationException("LibVLC n'a pas pu demarrer la lecture du media.");
             }
+
+            _ = StartThumbnailGenerationAsync(info);
         }
         catch (OperationCanceledException)
         {
@@ -201,6 +224,80 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         {
             IsLoading = false;
         }
+    }
+
+    private async Task StartThumbnailGenerationAsync(MediaInfo info)
+    {
+        var cts = new CancellationTokenSource();
+        _thumbnailCts = cts;
+
+        try
+        {
+            SpriteSet layout = await Task.Run(() => _thumbnailService.ComputeLayout(info), cts.Token);
+            if (cts.IsCancellationRequested || _disposed)
+            {
+                return;
+            }
+
+            var store = new ThumbnailStore(layout, _thumbnailService, _logger);
+            Thumbnails = store;
+            IsGeneratingThumbnails = true;
+            ThumbnailProgress = 0.0;
+            ThumbnailStatus = "Vignettes : 0 %";
+
+            var progress = new Progress<double>(fraction =>
+            {
+                if (cts.IsCancellationRequested || _disposed)
+                {
+                    return;
+                }
+
+                ThumbnailProgress = fraction;
+                int percent = (int)Math.Round(fraction * 100.0);
+                ThumbnailStatus = $"Vignettes : {percent} %";
+            });
+
+            await Task.Run(() => _thumbnailService.GetOrCreateAsync(info, progress, cts.Token), cts.Token);
+
+            if (!cts.IsCancellationRequested && !_disposed)
+            {
+                ThumbnailProgress = 1.0;
+                ThumbnailStatus = "Vignettes pretes";
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Annulation normale lors du changement de video ou fermeture.
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"Vignettes indisponibles pour {info.Path}", ex);
+            if (!cts.IsCancellationRequested && !_disposed)
+            {
+                ThumbnailProgress = 0.0;
+                ThumbnailStatus = "Vignettes indisponibles";
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(_thumbnailCts, cts))
+            {
+                IsGeneratingThumbnails = false;
+            }
+        }
+    }
+
+    private void CancelThumbnailGeneration()
+    {
+        _thumbnailCts?.Cancel();
+        _thumbnailCts?.Dispose();
+        _thumbnailCts = null;
+
+        Thumbnails?.Dispose();
+        Thumbnails = null;
+        IsGeneratingThumbnails = false;
+        ThumbnailProgress = 0.0;
+        ThumbnailStatus = "En attente";
     }
 
     [RelayCommand(CanExecute = nameof(IsMediaLoaded))]
@@ -324,6 +421,23 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             return;
         }
 
+        SeekInternal(target);
+    }
+
+    public void SeekFromBar(TimeSpan target, bool isFinal)
+    {
+        if (!IsMediaLoaded)
+        {
+            return;
+        }
+
+        long now = Environment.TickCount64;
+        if (!isFinal && now - _lastScrubSeekTickMs < ScrubThrottleMilliseconds)
+        {
+            return;
+        }
+
+        _lastScrubSeekTickMs = now;
         SeekInternal(target);
     }
 
@@ -492,6 +606,8 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         _openCts?.Cancel();
         _openCts?.Dispose();
         _openCts = null;
+
+        CancelThumbnailGeneration();
 
         _currentMedia?.Dispose();
         _currentMedia = null;
