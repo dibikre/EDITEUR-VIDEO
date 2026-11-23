@@ -32,6 +32,7 @@ public sealed class TimelineControl : Control
     private const double MaxSnapToleranceSeconds = 0.5;
     private const double SnapTolerancePx = 8.0;
     private const long FollowSuspendDurationMs = 3000;
+    private const double ZoomStretchDurationMs = 260.0;
     private const int MaxFormattedTextCacheEntries = 256;
 
     private readonly record struct SegmentLabelKey(string Name, int WidthBucket, bool Enabled);
@@ -77,7 +78,6 @@ public sealed class TimelineControl : Control
     private IPen _markerHandleOutlinePen = null!;
     private IPen _pendingStartPen = null!;
     private IImmutableBrush _zoomRangeFillBrush = Brushes.Transparent;
-    private IImmutableBrush _zoomRangeBadgeBrush = Brushes.Transparent;
     private IPen _zoomRangeBorderPen = null!;
     private StreamGeometry _markerDiamondGeometry = null!;
     private Typeface _labelTypeface;
@@ -115,6 +115,18 @@ public sealed class TimelineControl : Control
     private KeyModifiers _lastKeyModifiers;
     private long _followSuspendedUntilTick;
     private bool _isUpdatingViewportProps;
+
+    // Etat d'animation d'etirement du zoom
+    private bool _isZoomAnimating;
+    private int _zoomAnimGeneration;
+    private long _zoomAnimStartTicks;
+    private double _zoomAnimStartViewStart;
+    private double _zoomAnimStartViewEnd;
+    private double _zoomAnimTargetViewStart;
+    private double _zoomAnimTargetViewEnd;
+    private double _zoomAnimRangeStart;
+    private double _zoomAnimRangeEnd;
+    private double _zoomAnimProgress;
 
     public static readonly StyledProperty<TimeSpan> DurationProperty =
         AvaloniaProperty.Register<TimelineControl, TimeSpan>(nameof(Duration), TimeSpan.Zero);
@@ -350,6 +362,7 @@ public sealed class TimelineControl : Control
         _isAttached = false;
         _edgeScrollTimer.Stop();
         _hoverPopup.Hide();
+        CancelZoomAnimation();
         UnsubscribeRendering();
     }
 
@@ -375,6 +388,7 @@ public sealed class TimelineControl : Control
             return;
         }
 
+        CancelZoomAnimation();
         ClampViewportProps();
         ScheduleRender();
         ViewportChanged?.Invoke(this, EventArgs.Empty);
@@ -384,6 +398,7 @@ public sealed class TimelineControl : Control
     {
         if (!_isUpdatingViewportProps && e.NewValue is true)
         {
+            CancelZoomAnimation();
             SyncViewportToSize(Bounds.Width);
             ScheduleRender();
         }
@@ -406,6 +421,7 @@ public sealed class TimelineControl : Control
 
     private void HandleDurationChanged()
     {
+        CancelZoomAnimation();
         _followSuspendedUntilTick = 0;
         ReanchorPlayhead(Math.Clamp(Position.TotalSeconds, 0.0, GetTotalSeconds()));
         SyncViewportToSize(Bounds.Width);
@@ -560,6 +576,7 @@ public sealed class TimelineControl : Control
 
     public void ZoomByFactorCentered(double factor)
     {
+        CancelZoomAnimation();
         double totalSeconds = GetTotalSeconds();
         double width = Bounds.Width;
         if (totalSeconds <= 0 || width <= 0)
@@ -581,6 +598,7 @@ public sealed class TimelineControl : Control
 
     private void ApplyZoomAtAnchor(double factor, double anchorTime, double anchorX)
     {
+        CancelZoomAnimation();
         double totalSeconds = GetTotalSeconds();
         double width = Bounds.Width;
         if (totalSeconds <= 0 || width <= 0)
@@ -602,6 +620,7 @@ public sealed class TimelineControl : Control
 
     private void ZoomToRange(double rawStartSeconds, double rawEndSeconds)
     {
+        CancelZoomAnimation();
         double totalSeconds = GetTotalSeconds();
         double width = Bounds.Width;
         if (totalSeconds <= 0 || width <= 0)
@@ -622,15 +641,127 @@ public sealed class TimelineControl : Control
 
         double span = Math.Max(0.05, t2 - t1);
         double minPps = GetMinPixelsPerSecond(width, totalSeconds);
-        double newPps = Math.Clamp(width / span, minPps, MaxPixelsPerSecond);
-        double newOffset = ClampOffset(t1, newPps, width);
+        double targetPps = Math.Clamp(width / span, minPps, MaxPixelsPerSecond);
+        double targetViewStart = ClampOffset(t1, targetPps, width);
+        double targetViewEnd = Math.Min(totalSeconds, targetViewStart + (width / targetPps));
+
+        double currentPps = PixelsPerSecond > 0 ? PixelsPerSecond : minPps;
+        double startViewStart = ClampOffset(ScrollOffsetSeconds, currentPps, width);
+        double startViewEnd = Math.Min(totalSeconds, startViewStart + (width / currentPps));
 
         NotifyUserNavigated();
-        SetViewportValues(newPps, newOffset, isFit: false);
+        SetViewportValues(currentPps, startViewStart, isFit: false);
         SetCurrentValue(IsRangeZoomActiveProperty, true);
-        ScheduleRender();
         ViewportChanged?.Invoke(this, EventArgs.Empty);
         RangeZoomSelected?.Invoke(this, (t1, t2, width));
+
+        StartZoomStretchAnimation(startViewStart, startViewEnd, targetViewStart, targetViewEnd, t1, t2);
+    }
+
+    private void StartZoomStretchAnimation(
+        double startViewStart,
+        double startViewEnd,
+        double targetViewStart,
+        double targetViewEnd,
+        double rangeStart,
+        double rangeEnd)
+    {
+        _isZoomAnimating = true;
+        int generation = ++_zoomAnimGeneration;
+        _zoomAnimStartTicks = Stopwatch.GetTimestamp();
+        _zoomAnimStartViewStart = startViewStart;
+        _zoomAnimStartViewEnd = startViewEnd;
+        _zoomAnimTargetViewStart = targetViewStart;
+        _zoomAnimTargetViewEnd = targetViewEnd;
+        _zoomAnimRangeStart = rangeStart;
+        _zoomAnimRangeEnd = rangeEnd;
+        _zoomAnimProgress = 0.0;
+
+        if (!_isAttached || TopLevel.GetTopLevel(this) is not { } topLevel)
+        {
+            CompleteZoomStretchImmediately();
+            return;
+        }
+
+        topLevel.RequestAnimationFrame(_ => OnZoomAnimationFrame(generation));
+    }
+
+    private void OnZoomAnimationFrame(int generation)
+    {
+        if (!_isZoomAnimating || _zoomAnimGeneration != generation || !_isAttached)
+        {
+            return;
+        }
+
+        double totalSeconds = GetTotalSeconds();
+        double width = Bounds.Width;
+        if (totalSeconds <= 0 || width <= 0)
+        {
+            CancelZoomAnimation();
+            return;
+        }
+
+        double elapsedMs = Stopwatch.GetElapsedTime(_zoomAnimStartTicks).TotalMilliseconds;
+        double rawT = Math.Clamp(elapsedMs / ZoomStretchDurationMs, 0.0, 1.0);
+        double eased = 1.0 - Math.Pow(1.0 - rawT, 3.0);
+        _zoomAnimProgress = eased;
+
+        double curStart = _zoomAnimStartViewStart + ((_zoomAnimTargetViewStart - _zoomAnimStartViewStart) * eased);
+        double curEnd = _zoomAnimStartViewEnd + ((_zoomAnimTargetViewEnd - _zoomAnimStartViewEnd) * eased);
+        double curSpan = Math.Max(0.05, curEnd - curStart);
+        double minPps = GetMinPixelsPerSecond(width, totalSeconds);
+        double curPps = Math.Clamp(width / curSpan, minPps, MaxPixelsPerSecond);
+        double curOffset = ClampOffset(curStart, curPps, width);
+
+        SetViewportValues(curPps, curOffset, isFit: false);
+        ViewportChanged?.Invoke(this, EventArgs.Empty);
+        InvalidateVisual();
+
+        if (rawT >= 1.0)
+        {
+            _isZoomAnimating = false;
+            return;
+        }
+
+        if (TopLevel.GetTopLevel(this) is { } topLevel)
+        {
+            topLevel.RequestAnimationFrame(_ => OnZoomAnimationFrame(generation));
+        }
+        else
+        {
+            CompleteZoomStretchImmediately();
+        }
+    }
+
+    private void CompleteZoomStretchImmediately()
+    {
+        _isZoomAnimating = false;
+        _zoomAnimGeneration++;
+
+        double totalSeconds = GetTotalSeconds();
+        double width = Bounds.Width;
+        if (totalSeconds <= 0 || width <= 0)
+        {
+            return;
+        }
+
+        double span = Math.Max(0.05, _zoomAnimTargetViewEnd - _zoomAnimTargetViewStart);
+        double minPps = GetMinPixelsPerSecond(width, totalSeconds);
+        double targetPps = Math.Clamp(width / span, minPps, MaxPixelsPerSecond);
+        double targetOffset = ClampOffset(_zoomAnimTargetViewStart, targetPps, width);
+
+        SetViewportValues(targetPps, targetOffset, isFit: false);
+        ViewportChanged?.Invoke(this, EventArgs.Empty);
+        ScheduleRender();
+    }
+
+    private void CancelZoomAnimation()
+    {
+        if (_isZoomAnimating)
+        {
+            _isZoomAnimating = false;
+            _zoomAnimGeneration++;
+        }
     }
 
     private void SyncViewportToSize(double width)
@@ -808,7 +939,32 @@ public sealed class TimelineControl : Control
 
         if (_isSelectingZoomRange)
         {
-            DrawZoomRangeSelection(context, width, totalSeconds, pps, offsetSeconds);
+            DrawZoomRangeHighlight(
+                context,
+                width,
+                totalSeconds,
+                pps,
+                offsetSeconds,
+                Math.Min(_zoomSelectStartSeconds, _zoomSelectCurrentSeconds),
+                Math.Max(_zoomSelectStartSeconds, _zoomSelectCurrentSeconds));
+        }
+        else if (_isZoomAnimating)
+        {
+            double fadeOpacity = Math.Clamp(1.0 - _zoomAnimProgress, 0.0, 1.0);
+            if (fadeOpacity > 0.01)
+            {
+                using (context.PushOpacity(fadeOpacity))
+                {
+                    DrawZoomRangeHighlight(
+                        context,
+                        width,
+                        totalSeconds,
+                        pps,
+                        offsetSeconds,
+                        _zoomAnimRangeStart,
+                        _zoomAnimRangeEnd);
+                }
+            }
         }
 
         if (_isHovering)
@@ -1161,15 +1317,17 @@ public sealed class TimelineControl : Control
         dc.DrawLine(_hoverPen, new Point(alignedX, 0.0), new Point(alignedX, height));
     }
 
-    private void DrawZoomRangeSelection(
+    private void DrawZoomRangeHighlight(
         DrawingContext dc,
         double width,
         double totalSeconds,
         double pps,
-        double offsetSeconds)
+        double offsetSeconds,
+        double rawStartSeconds,
+        double rawEndSeconds)
     {
-        double t1 = Math.Clamp(Math.Min(_zoomSelectStartSeconds, _zoomSelectCurrentSeconds), 0.0, totalSeconds);
-        double t2 = Math.Clamp(Math.Max(_zoomSelectStartSeconds, _zoomSelectCurrentSeconds), 0.0, totalSeconds);
+        double t1 = Math.Clamp(rawStartSeconds, 0.0, totalSeconds);
+        double t2 = Math.Clamp(rawEndSeconds, 0.0, totalSeconds);
         double x1 = Math.Clamp((t1 - offsetSeconds) * pps, 0.0, width);
         double x2 = Math.Clamp((t2 - offsetSeconds) * pps, 0.0, width);
         double selWidth = Math.Max(1.0, x2 - x1);
@@ -1178,31 +1336,12 @@ public sealed class TimelineControl : Control
         dc.DrawRectangle(_zoomRangeFillBrush, null, filmRect);
         dc.DrawLine(_zoomRangeBorderPen, new Point(Math.Round(x1) + 0.5, RulerHeight), new Point(Math.Round(x1) + 0.5, SegmentsBandTop + SegmentsBandHeight));
         dc.DrawLine(_zoomRangeBorderPen, new Point(Math.Round(x2) + 0.5, RulerHeight), new Point(Math.Round(x2) + 0.5, SegmentsBandTop + SegmentsBandHeight));
-
-        if (selWidth >= 24.0)
-        {
-            string rangeText = $"Zoom : {FormatRulerLabel(t1, totalSeconds >= 3600.0, true)} - {FormatRulerLabel(t2, totalSeconds >= 3600.0, true)}";
-            var ft = new FormattedText(
-                rangeText,
-                CultureInfo.InvariantCulture,
-                FlowDirection.LeftToRight,
-                _labelTypeface,
-                10.5,
-                _textPrimaryBrush);
-
-            double badgeW = ft.Width + 10.0;
-            double badgeH = ft.Height + 4.0;
-            double badgeX = Math.Clamp(x1 + ((selWidth - badgeW) / 2.0), 4.0, Math.Max(4.0, width - badgeW - 4.0));
-            double badgeY = FilmstripTop + 4.0;
-
-            dc.DrawRectangle(_zoomRangeBadgeBrush, _zoomRangeBorderPen, new Rect(badgeX, badgeY, badgeW, badgeH), 3.0, 3.0);
-            dc.DrawText(ft, new Point(badgeX + 5.0, badgeY + 2.0));
-        }
     }
 
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
     {
         base.OnPointerWheelChanged(e);
+        CancelZoomAnimation();
 
         double totalSeconds = GetTotalSeconds();
         double width = Bounds.Width;
@@ -1240,6 +1379,7 @@ public sealed class TimelineControl : Control
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
+        CancelZoomAnimation();
 
         if (GetTotalSeconds() <= 0 || PixelsPerSecond <= 0)
         {
@@ -1951,7 +2091,6 @@ public sealed class TimelineControl : Control
         _markerHandleOutlinePen = new ImmutablePen(_backgroundBrush, 1.0);
         _pendingStartPen = new ImmutablePen(_pendingStartBrush, 2.0);
         _zoomRangeFillBrush = new ImmutableSolidColorBrush(Color.FromArgb(0x48, 0x3B, 0x82, 0xF6));
-        _zoomRangeBadgeBrush = new ImmutableSolidColorBrush(Color.FromArgb(0xE6, 0x1A, 0x1D, 0x23));
         _zoomRangeBorderPen = new ImmutablePen(selectedBorderBrush, 1.5);
 
         IImmutableBrush hoverBrush = new ImmutableSolidColorBrush(Color.FromArgb(0x99, 0xED, 0xF0, 0xF5));
