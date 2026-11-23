@@ -129,6 +129,27 @@ public partial class MainWindow : Window
         bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
         if (ctrl)
         {
+            switch (e.Key)
+            {
+                case Key.OemPlus:
+                case Key.Add:
+                    _viewModel.Timeline.ZoomInCommand.Execute(null);
+                    e.Handled = true;
+                    break;
+
+                case Key.OemMinus:
+                case Key.Subtract:
+                    _viewModel.Timeline.ZoomOutCommand.Execute(null);
+                    e.Handled = true;
+                    break;
+
+                case Key.D0:
+                case Key.NumPad0:
+                    _viewModel.Timeline.FitToWindowCommand.Execute(null);
+                    e.Handled = true;
+                    break;
+            }
+
             return;
         }
 

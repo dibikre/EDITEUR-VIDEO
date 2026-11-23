@@ -191,40 +191,20 @@
             </Grid>
         </Border>
 
-        <!-- 4. Zone timeline (hauteur ~120 px, placeholder) -->
+        <!-- 4. Zone timeline -->
         <Border Grid.Row="3"
-                Height="120"
                 Background="{StaticResource WindowBackgroundBrush}"
                 BorderBrush="{StaticResource BorderBrush}"
                 BorderThickness="0,0,0,1"
                 Padding="12,8">
-            <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
-                </Grid.RowDefinitions>
-
-                <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,6">
-                    <TextBlock Text="Outils :" Style="{StaticResource MutedTextStyle}" Margin="0,0,8,0" />
-                    <Button Content="Split (S)" IsEnabled="False" Margin="0,0,6,0" />
-                    <Button Content="In (I)" IsEnabled="False" Margin="0,0,6,0" />
-                    <Button Content="Out (O)" IsEnabled="False" Margin="0,0,6,0" />
-                    <Button Content="Supprimer" IsEnabled="False" Margin="0,0,12,0" />
-                    <Button Content="Zoom -" IsEnabled="False" Margin="0,0,6,0" />
-                    <Button Content="Zoom +" IsEnabled="False" />
-                </StackPanel>
-
-                <Border Grid.Row="1"
-                        Background="{StaticResource SurfaceBrush}"
-                        BorderBrush="{StaticResource BorderSubtleBrush}"
-                        BorderThickness="1"
-                        CornerRadius="4">
-                    <TextBlock Text="Timeline d'edition (filmstrip, marqueurs et segments — etape 4)"
-                               Style="{StaticResource MutedTextStyle}"
-                               HorizontalAlignment="Center"
-                               VerticalAlignment="Center" />
-                </Border>
-            </Grid>
+            <controls:TimelineView Duration="{Binding Player.Duration}"
+                                   Position="{Binding Player.Position}"
+                                   IsPlaying="{Binding Player.IsPlaying}"
+                                   PlaybackSpeed="{Binding Player.Speed}"
+                                   Thumbnails="{Binding Player.Thumbnails}"
+                                   Timeline="{Binding Timeline}"
+                                   SeekRequested="OnSeekBarSeekRequested"
+                                   SeekCompleted="OnSeekBarSeekCompleted" />
         </Border>
 
         <!-- 5. Panneau du bas (placeholders) -->

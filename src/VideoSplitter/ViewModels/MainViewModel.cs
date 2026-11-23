@@ -10,13 +10,15 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private readonly IAppLogger _logger;
 
     public PlayerViewModel Player { get; }
+    public TimelineViewModel Timeline { get; }
 
     [ObservableProperty]
     private string _title = "VideoSplitter";
 
-    public MainViewModel(PlayerViewModel player, IAppLogger logger)
+    public MainViewModel(PlayerViewModel player, TimelineViewModel timeline, IAppLogger logger)
     {
         Player = player;
+        Timeline = timeline;
         _logger = logger;
 
         Player.PropertyChanged += OnPlayerPropertyChanged;
@@ -30,6 +32,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             Title = Player.MediaInfo is { } info
                 ? $"VideoSplitter - {Path.GetFileName(info.Path)}"
                 : "VideoSplitter";
+
+            Timeline.ResetForNewMedia();
         }
     }
 

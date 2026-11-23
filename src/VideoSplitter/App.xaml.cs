@@ -63,6 +63,7 @@ public partial class App : Application
         services.AddSingleton<IThumbnailService, ThumbnailService>();
 
         services.AddSingleton<PlayerViewModel>();
+        services.AddSingleton<TimelineViewModel>();
         services.AddSingleton<MainViewModel>();
         services.AddTransient<MainWindow>();
     }
