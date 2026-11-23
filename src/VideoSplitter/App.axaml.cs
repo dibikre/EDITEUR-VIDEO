@@ -58,9 +58,10 @@ public partial class App : Application
             }
             catch (Exception ex)
             {
+                Console.Error.WriteLine(ex);
                 _logger?.Error("Erreur critique lors du demarrage de l'application.", ex);
-                ShowStartupError(ex.Message);
-                desktop.Shutdown(1);
+                desktop.MainWindow = CreateStartupErrorDialog(ex.ToString());
+                base.OnFrameworkInitializationCompleted();
                 return;
             }
         }
@@ -121,9 +122,23 @@ public partial class App : Application
         e.SetObserved();
     }
 
-    private void ShowStartupError(string detail)
+    private MessageDialog CreateStartupErrorDialog(string detail)
     {
-        ShowErrorOnUiThread("Impossible de demarrer VideoSplitter.", detail);
+        string logHint = _logger is not null
+            ? $"\n\nJournal : {_logger.LogDirectory}"
+            : string.Empty;
+
+        var dialog = new MessageDialog(
+            "VideoSplitter — Erreur de démarrage",
+            $"Impossible de démarrer VideoSplitter.\n\nDétail : {detail}{logHint}",
+            isConfirmation: false)
+        {
+            Width = 680,
+            ShowInTaskbar = true,
+            WindowStartupLocation = Avalonia.Controls.WindowStartupLocation.CenterScreen
+        };
+
+        return dialog;
     }
 
     private void ShowErrorOnUiThread(string summary, string detail)

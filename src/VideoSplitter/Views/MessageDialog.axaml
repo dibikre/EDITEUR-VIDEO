@@ -8,9 +8,11 @@
         ShowInTaskbar="False">
     <Border Background="{StaticResource SurfaceBrush}" Padding="18">
         <StackPanel Spacing="16">
-            <TextBlock x:Name="MessageTextBlock"
-                       TextWrapping="Wrap"
-                       FontSize="13.5" />
+            <ScrollViewer MaxHeight="400" VerticalScrollBarVisibility="Auto">
+                <TextBlock x:Name="MessageTextBlock"
+                           TextWrapping="Wrap"
+                           FontSize="13.5" />
+            </ScrollViewer>
 
             <StackPanel Orientation="Horizontal"
                         HorizontalAlignment="Right"

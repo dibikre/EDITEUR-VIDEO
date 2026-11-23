@@ -45,8 +45,9 @@
         <SolidColorBrush x:Key="DangerBrush" Color="{StaticResource DangerColor}" />
 
         <!-- Alignement des tokens FluentTheme sur la palette sombre -->
+        <Color x:Key="SystemAccentColor">#3B82F6</Color>
         <SolidColorBrush x:Key="SystemControlHighlightAccentBrush" Color="{StaticResource AccentColor}" />
-        <SolidColorBrush x:Key="SystemAccentColor" Color="{StaticResource AccentColor}" />
+        <SolidColorBrush x:Key="SystemControlBackgroundAccentBrush" Color="{StaticResource AccentColor}" />
         <SolidColorBrush x:Key="ThemeAccentBrush" Color="{StaticResource AccentColor}" />
     </Styles.Resources>
 
