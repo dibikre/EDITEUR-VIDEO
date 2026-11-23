@@ -241,7 +241,7 @@ public sealed class FfmpegService : IFfmpegService
             BufferedCommandResult listResult = await Cli.Wrap(_ffmpegPath)
                 .WithArguments(["-hide_banner", "-encoders"])
                 .WithValidation(CommandResultValidation.None)
-                .ExecuteBufferedAsync(listCts.Token, CancellationToken.None)
+                .ExecuteBufferedAsync(Encoding.UTF8, Encoding.UTF8, listCts.Token, CancellationToken.None)
                 .ConfigureAwait(false);
 
             if (listResult.ExitCode != 0)

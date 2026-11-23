@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Text;
 using CliWrap;
 using CliWrap.EventStream;
 using VideoSplitter.Export;
@@ -99,7 +100,11 @@ public sealed class ExportService : IExportService
                 .WithArguments(args)
                 .WithValidation(CommandResultValidation.None);
 
-            await foreach (CommandEvent cmdEvent in command.ListenAsync(ct, CancellationToken.None).ConfigureAwait(false))
+            await foreach (CommandEvent cmdEvent in command.ListenAsync(
+                Encoding.UTF8,
+                Encoding.UTF8,
+                ct,
+                CancellationToken.None).ConfigureAwait(false))
             {
                 switch (cmdEvent)
                 {
