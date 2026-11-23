@@ -1421,7 +1421,10 @@ public sealed class TimelineControl : FrameworkElement
         {
             _isHovering = false;
             _hoverPopup.Hide();
-            Cursor = Cursors.Hand;
+            if (Cursor != Cursors.Hand)
+            {
+                Cursor = Cursors.Hand;
+            }
             RenderHoverLayer();
         }
     }
@@ -1491,9 +1494,14 @@ public sealed class TimelineControl : FrameworkElement
 
     private void UpdateCursorForPoint(Point pos)
     {
-        Cursor = _isDraggingMarker || HitTestMarker(pos.X, pos.Y) >= 0
+        Cursor targetCursor = _isDraggingMarker || HitTestMarker(pos.X, pos.Y) >= 0
             ? Cursors.SizeWE
             : Cursors.Hand;
+
+        if (Cursor != targetCursor)
+        {
+            Cursor = targetCursor;
+        }
     }
 
     private TimeSpan ComputeSnappedAndClampedMarkerTime(double mouseX)

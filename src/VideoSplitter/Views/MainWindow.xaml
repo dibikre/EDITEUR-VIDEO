@@ -16,8 +16,8 @@
         MinWidth="1000"
         MinHeight="650"
         AllowDrop="True"
-        DragOver="OnWindowDragOver"
-        Drop="OnWindowDrop"
+        PreviewDragOver="OnWindowPreviewDragOver"
+        PreviewDrop="OnWindowPreviewDrop"
         PreviewKeyDown="OnWindowPreviewKeyDown"
         Closing="OnWindowClosing"
         WindowStartupLocation="CenterScreen">
@@ -100,8 +100,24 @@
         <Border Grid.Row="1"
                 Background="{StaticResource VideoBackgroundBrush}"
                 BorderBrush="{StaticResource BorderSubtleBrush}"
-                BorderThickness="0,0,0,1">
-            <vlc:VideoView x:Name="LecteurVideoView" />
+                BorderThickness="0,0,0,1"
+                AllowDrop="True">
+            <vlc:VideoView x:Name="LecteurVideoView"
+                           Background="{StaticResource VideoBackgroundBrush}"
+                           AllowDrop="True"
+                           PreviewDragOver="OnWindowPreviewDragOver"
+                           PreviewDrop="OnWindowPreviewDrop">
+                <vlc:VideoView.Style>
+                    <Style TargetType="{x:Type vlc:VideoView}">
+                        <Setter Property="Visibility" Value="Hidden" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Player.IsMediaLoaded}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </vlc:VideoView.Style>
+            </vlc:VideoView>
         </Border>
 
         <!-- 3. Controles de lecture -->

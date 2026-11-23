@@ -30,6 +30,8 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     private CancellationTokenSource? _thumbnailCts;
     private Media? _currentMedia;
     private int _pauseOnFirstPlay;
+    private int _hasVoutForCurrentOpen;
+    private long _openGeneration;
     private long _pendingSeekTargetMs = -1;
     private long _lastScrubSeekTickMs;
     private bool _disposed;
@@ -182,6 +184,8 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         IsLoading = true;
         _logger.Info($"Ouverture demandee : {path}");
 
+        long generation = Interlocked.Increment(ref _openGeneration);
+
         try
         {
             MediaInfo info = await _ffmpegService.ProbeAsync(path, ct);
@@ -202,31 +206,46 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             IsPlaying = false;
 
             _mediaPlayer.Volume = Volume;
-            _mediaPlayer.Mute = IsMuted;
             _mediaPlayer.SetRate((float)Speed);
 
             Interlocked.Exchange(ref _pendingSeekTargetMs, -1);
+            Interlocked.Exchange(ref _hasVoutForCurrentOpen, 0);
             Interlocked.Exchange(ref _pauseOnFirstPlay, 1);
+
+            // Couper temporairement le son pendant le pre-roll de la premiere image
+            _mediaPlayer.Mute = true;
 
             if (!_mediaPlayer.Play(_currentMedia))
             {
                 Interlocked.Exchange(ref _pauseOnFirstPlay, 0);
+                _mediaPlayer.Mute = IsMuted;
                 throw new InvalidOperationException("LibVLC n'a pas pu demarrer la lecture du media.");
             }
 
+            ScheduleInitialPauseFallback(generation, 1500);
             _ = StartThumbnailGenerationAsync(info);
         }
         catch (OperationCanceledException)
         {
+            if (Volatile.Read(ref _openGeneration) == generation)
+            {
+                Interlocked.Exchange(ref _pauseOnFirstPlay, 0);
+                _mediaPlayer.Mute = IsMuted;
+            }
+
             _logger.Info("Ouverture annulee.");
         }
         catch (MediaProbeException ex)
         {
+            Interlocked.Exchange(ref _pauseOnFirstPlay, 0);
+            _mediaPlayer.Mute = IsMuted;
             _logger.Error($"Echec d'ouverture ({path}) : {ex.UserMessage} | {ex.TechnicalDetails}", ex);
             ErrorOccurred?.Invoke(this, ex.UserMessage);
         }
         catch (Exception ex)
         {
+            Interlocked.Exchange(ref _pauseOnFirstPlay, 0);
+            _mediaPlayer.Mute = IsMuted;
             _logger.Error($"Erreur inattendue lors de l'ouverture de {path}", ex);
             ErrorOccurred?.Invoke(this, $"Impossible d'ouvrir la video.\n\nDetail : {ex.Message}");
         }
@@ -318,6 +337,17 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
             return;
         }
 
+        if (Interlocked.Exchange(ref _pauseOnFirstPlay, 0) == 1)
+        {
+            _mediaPlayer.Mute = IsMuted;
+            if (_mediaPlayer.State == VLCState.Paused)
+            {
+                _mediaPlayer.Play();
+            }
+            IsPlaying = true;
+            return;
+        }
+
         if (_mediaPlayer.IsPlaying)
         {
             _mediaPlayer.SetPause(true);
@@ -328,6 +358,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         {
             Interlocked.Exchange(ref _pauseOnFirstPlay, 0);
             Interlocked.Exchange(ref _pendingSeekTargetMs, -1);
+            _mediaPlayer.Mute = IsMuted;
             _ = Task.Run(() =>
             {
                 _mediaPlayer.Stop();
@@ -462,13 +493,17 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
         if (_mediaPlayer.State == VLCState.Ended)
         {
+            long generation = Interlocked.Increment(ref _openGeneration);
             Interlocked.Exchange(ref _pendingSeekTargetMs, targetMs);
+            Interlocked.Exchange(ref _hasVoutForCurrentOpen, 0);
             Interlocked.Exchange(ref _pauseOnFirstPlay, 1);
+            _mediaPlayer.Mute = true;
             _ = Task.Run(() =>
             {
                 _mediaPlayer.Stop();
                 _mediaPlayer.Play();
             });
+            ScheduleInitialPauseFallback(generation, 1000);
             return;
         }
 
@@ -479,6 +514,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     {
         _mediaPlayer.TimeChanged += OnVlcTimeChanged;
         _mediaPlayer.LengthChanged += OnVlcLengthChanged;
+        _mediaPlayer.Vout += OnVlcVout;
         _mediaPlayer.Playing += OnVlcPlaying;
         _mediaPlayer.Paused += OnVlcPaused;
         _mediaPlayer.Stopped += OnVlcStopped;
@@ -490,6 +526,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     {
         _mediaPlayer.TimeChanged -= OnVlcTimeChanged;
         _mediaPlayer.LengthChanged -= OnVlcLengthChanged;
+        _mediaPlayer.Vout -= OnVlcVout;
         _mediaPlayer.Playing -= OnVlcPlaying;
         _mediaPlayer.Paused -= OnVlcPaused;
         _mediaPlayer.Stopped -= OnVlcStopped;
@@ -500,6 +537,20 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     private void OnVlcTimeChanged(object? sender, MediaPlayerTimeChangedEventArgs e)
     {
         long ms = Math.Max(0L, e.Time);
+
+        if (Volatile.Read(ref _pauseOnFirstPlay) == 1
+            && Volatile.Read(ref _hasVoutForCurrentOpen) == 1
+            && ms > 0)
+        {
+            CompleteInitialPause(Volatile.Read(ref _openGeneration));
+            return;
+        }
+
+        if (Volatile.Read(ref _pauseOnFirstPlay) == 1)
+        {
+            return;
+        }
+
         _dispatcher.BeginInvoke(() =>
         {
             if (!_disposed && _mediaPlayer.State != VLCState.Ended)
@@ -526,32 +577,100 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         });
     }
 
+    private void OnVlcVout(object? sender, MediaPlayerVoutEventArgs e)
+    {
+        if (e.Count <= 0 || Volatile.Read(ref _pauseOnFirstPlay) != 1)
+        {
+            return;
+        }
+
+        Interlocked.Exchange(ref _hasVoutForCurrentOpen, 1);
+        long gen = Volatile.Read(ref _openGeneration);
+
+        long seekTarget = Volatile.Read(ref _pendingSeekTargetMs);
+        if (seekTarget >= 0)
+        {
+            CompleteInitialPause(gen);
+            return;
+        }
+
+        ScheduleInitialPauseFallback(gen, 280);
+    }
+
+    private void ScheduleInitialPauseFallback(long generation, int delayMs)
+    {
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(delayMs).ConfigureAwait(false);
+            if (!_disposed
+                && Volatile.Read(ref _openGeneration) == generation
+                && Volatile.Read(ref _pauseOnFirstPlay) == 1)
+            {
+                CompleteInitialPause(generation);
+            }
+        });
+    }
+
+    private void CompleteInitialPause(long generation)
+    {
+        if (_disposed || Volatile.Read(ref _openGeneration) != generation)
+        {
+            return;
+        }
+
+        if (Interlocked.Exchange(ref _pauseOnFirstPlay, 0) != 1)
+        {
+            return;
+        }
+
+        long seekTarget = Interlocked.Exchange(ref _pendingSeekTargetMs, -1);
+        bool targetMute = IsMuted;
+        _ = Task.Run(() =>
+        {
+            if (_disposed || Volatile.Read(ref _openGeneration) != generation)
+            {
+                return;
+            }
+
+            if (seekTarget >= 0)
+            {
+                _mediaPlayer.Time = seekTarget;
+            }
+
+            _mediaPlayer.SetPause(true);
+            _mediaPlayer.Mute = targetMute;
+        });
+
+        TimeSpan uiPos = seekTarget >= 0 ? TimeSpan.FromMilliseconds(seekTarget) : TimeSpan.Zero;
+        _dispatcher.BeginInvoke(() =>
+        {
+            if (!_disposed && Volatile.Read(ref _openGeneration) == generation)
+            {
+                IsPlaying = false;
+                Position = uiPos;
+            }
+        });
+    }
+
     private void OnVlcPlaying(object? sender, EventArgs e)
     {
-        long seekTarget = Interlocked.Exchange(ref _pendingSeekTargetMs, -1);
-        bool shouldPause = Interlocked.Exchange(ref _pauseOnFirstPlay, 0) == 1;
-
-        if (shouldPause || seekTarget >= 0)
+        if (Volatile.Read(ref _pauseOnFirstPlay) == 1)
         {
-            _ = Task.Run(() =>
+            _dispatcher.BeginInvoke(() =>
             {
-                if (seekTarget >= 0)
+                if (!_disposed)
                 {
-                    _mediaPlayer.Time = seekTarget;
-                }
-
-                if (shouldPause)
-                {
-                    _mediaPlayer.SetPause(true);
+                    IsPlaying = false;
                 }
             });
+            return;
         }
 
         _dispatcher.BeginInvoke(() =>
         {
             if (!_disposed)
             {
-                IsPlaying = !shouldPause;
+                IsPlaying = true;
             }
         });
     }
@@ -580,10 +699,16 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
     private void OnVlcEndReached(object? sender, EventArgs e)
     {
+        bool wasPreRoll = Interlocked.Exchange(ref _pauseOnFirstPlay, 0) == 1;
         _dispatcher.BeginInvoke(() =>
         {
             if (!_disposed)
             {
+                if (wasPreRoll)
+                {
+                    _mediaPlayer.Mute = IsMuted;
+                }
+
                 IsPlaying = false;
                 Position = Duration;
             }
@@ -592,11 +717,13 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
     private void OnVlcEncounteredError(object? sender, EventArgs e)
     {
+        Interlocked.Exchange(ref _pauseOnFirstPlay, 0);
         _logger.Error("LibVLC a rencontre une erreur de lecture.");
         _dispatcher.BeginInvoke(() =>
         {
             if (!_disposed)
             {
+                _mediaPlayer.Mute = IsMuted;
                 IsPlaying = false;
                 ErrorOccurred?.Invoke(this, "Une erreur est survenue pendant la lecture de la video.");
             }

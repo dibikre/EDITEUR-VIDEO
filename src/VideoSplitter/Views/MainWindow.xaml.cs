@@ -1,10 +1,14 @@
 using System.ComponentModel;
+using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Threading;
 using VideoSplitter.Models;
 using VideoSplitter.Services;
 using VideoSplitter.ViewModels;
@@ -14,11 +18,51 @@ namespace VideoSplitter.Views;
 
 public partial class MainWindow : Window
 {
+    private const int WmEraseBkgnd = 0x0014;
+    private const int WmCtlColorStatic = 0x0138;
+    private const int WmDropFiles = 0x0233;
+    private const uint VideoBackgroundColorRef = 0x000C0A09u; // #090A0C en BGR
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Win32Rect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [DllImport("gdi32.dll", SetLastError = false)]
+    private static extern nint CreateSolidBrush(uint colorRef);
+
+    [DllImport("gdi32.dll", SetLastError = false)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeleteObject(nint hObject);
+
+    [DllImport("user32.dll", SetLastError = false)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetClientRect(nint hWnd, out Win32Rect lpRect);
+
+    [DllImport("user32.dll", SetLastError = false)]
+    private static extern int FillRect(nint hDc, ref Win32Rect lprc, nint hbr);
+
+    [DllImport("shell32.dll", SetLastError = false)]
+    private static extern void DragAcceptFiles(nint hWnd, [MarshalAs(UnmanagedType.Bool)] bool fAccept);
+
+    [DllImport("shell32.dll", EntryPoint = "DragQueryFileW", CharSet = CharSet.Unicode, SetLastError = false)]
+    private static extern uint DragQueryFile(nint hDrop, uint iFile, [Out] char[]? lpszFile, uint cch);
+
+    [DllImport("shell32.dll", SetLastError = false)]
+    private static extern void DragFinish(nint hDrop);
+
     private readonly MainViewModel _viewModel;
     private readonly VlcMediaPlayer _mediaPlayer;
     private readonly IAppLogger _logger;
     private SegmentRowViewModel? _mouseDownAlreadySelectedRow;
     private bool _isClosingAfterExportCancel;
+    private HwndSource? _windowHwndSource;
+    private HwndHost? _videoHwndHost;
+    private nint _videoBgBrush;
 
     public MainWindow(MainViewModel viewModel, VlcMediaPlayer mediaPlayer, IAppLogger logger)
     {
@@ -97,6 +141,110 @@ public partial class MainWindow : Window
             LecteurVideoView.MediaPlayer = _mediaPlayer;
             _logger.Info("MediaPlayer LibVLC associe a VideoView.");
         }
+
+        if (_videoBgBrush == 0)
+        {
+            _videoBgBrush = CreateSolidBrush(VideoBackgroundColorRef);
+        }
+
+        if (_windowHwndSource is null && PresentationSource.FromVisual(this) is HwndSource source)
+        {
+            _windowHwndSource = source;
+            _windowHwndSource.AddHook(OnWindowHwndMessage);
+        }
+
+        LecteurVideoView.IsVisibleChanged += OnVideoViewIsVisibleChanged;
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, AttachVideoHostHook);
+    }
+
+    private void OnVideoViewIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (e.NewValue is true && _videoHwndHost is null)
+        {
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, AttachVideoHostHook);
+        }
+    }
+
+    private void AttachVideoHostHook()
+    {
+        if (_videoHwndHost is not null)
+        {
+            return;
+        }
+
+        HwndHost? host = FindDescendant<HwndHost>(LecteurVideoView);
+        if (host is null)
+        {
+            return;
+        }
+
+        _videoHwndHost = host;
+        _videoHwndHost.MessageHook += OnVideoHostMessage;
+        if (_videoHwndHost.Handle != IntPtr.Zero)
+        {
+            DragAcceptFiles(_videoHwndHost.Handle, true);
+        }
+    }
+
+    private nint OnWindowHwndMessage(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
+    {
+        if (msg == WmCtlColorStatic
+            && _videoBgBrush != 0
+            && _videoHwndHost is { Handle: var hostHandle }
+            && hostHandle != IntPtr.Zero
+            && lParam == hostHandle)
+        {
+            handled = true;
+            return _videoBgBrush;
+        }
+
+        return IntPtr.Zero;
+    }
+
+    private nint OnVideoHostMessage(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
+    {
+        if (msg == WmEraseBkgnd && _videoBgBrush != 0 && wParam != IntPtr.Zero)
+        {
+            if (GetClientRect(hwnd, out Win32Rect rect))
+            {
+                FillRect(wParam, ref rect, _videoBgBrush);
+                handled = true;
+                return new IntPtr(1);
+            }
+        }
+        else if (msg == WmDropFiles && wParam != IntPtr.Zero)
+        {
+            string? droppedPath = TryReadFirstDroppedFile(wParam);
+            DragFinish(wParam);
+            if (droppedPath is not null
+                && File.Exists(droppedPath)
+                && PlayerViewModel.IsSupportedVideoFile(droppedPath))
+            {
+                handled = true;
+                Dispatcher.BeginInvoke(DispatcherPriority.Normal, () => _ = OpenDroppedVideoAsync(droppedPath));
+            }
+        }
+
+        return IntPtr.Zero;
+    }
+
+    private static string? TryReadFirstDroppedFile(nint hDrop)
+    {
+        uint count = DragQueryFile(hDrop, uint.MaxValue, null, 0);
+        if (count == 0)
+        {
+            return null;
+        }
+
+        uint len = DragQueryFile(hDrop, 0, null, 0);
+        if (len == 0)
+        {
+            return null;
+        }
+
+        var buffer = new char[len + 1];
+        uint copied = DragQueryFile(hDrop, 0, buffer, (uint)buffer.Length);
+        return copied > 0 ? new string(buffer, 0, (int)copied) : null;
     }
 
     private void OnWindowClosing(object? sender, CancelEventArgs e)
@@ -131,8 +279,27 @@ public partial class MainWindow : Window
     {
         Loaded -= OnLoaded;
         Closed -= OnClosed;
+        LecteurVideoView.IsVisibleChanged -= OnVideoViewIsVisibleChanged;
         _viewModel.Player.ErrorOccurred -= OnPlayerErrorOccurred;
         _viewModel.ConfirmAbortExportForOpen = null;
+
+        if (_videoHwndHost is not null)
+        {
+            _videoHwndHost.MessageHook -= OnVideoHostMessage;
+            _videoHwndHost = null;
+        }
+
+        if (_windowHwndSource is not null)
+        {
+            _windowHwndSource.RemoveHook(OnWindowHwndMessage);
+            _windowHwndSource = null;
+        }
+
+        if (_videoBgBrush != 0)
+        {
+            DeleteObject(_videoBgBrush);
+            _videoBgBrush = 0;
+        }
 
         // Detacher le lecteur avant la liberation du conteneur DI dans App.OnExit.
         LecteurVideoView.MediaPlayer = null;
@@ -268,26 +435,59 @@ public partial class MainWindow : Window
         return null;
     }
 
-    private void OnWindowDragOver(object sender, DragEventArgs e)
+    private static T? FindDescendant<T>(DependencyObject root) where T : DependencyObject
     {
-        if (TryGetDroppedVideoPath(e, out _))
+        int count = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < count; i++)
         {
-            e.Effects = DragDropEffects.Copy;
-        }
-        else
-        {
-            e.Effects = DragDropEffects.None;
+            DependencyObject child = VisualTreeHelper.GetChild(root, i);
+            if (child is T match)
+            {
+                return match;
+            }
+
+            T? nested = FindDescendant<T>(child);
+            if (nested is not null)
+            {
+                return nested;
+            }
         }
 
+        return null;
+    }
+
+    private void OnWindowPreviewDragOver(object sender, DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            return;
+        }
+
+        e.Effects = TryGetDroppedVideoPath(e, out _)
+            ? DragDropEffects.Copy
+            : DragDropEffects.None;
         e.Handled = true;
     }
 
-    private async void OnWindowDrop(object sender, DragEventArgs e)
+    private void OnWindowPreviewDrop(object sender, DragEventArgs e)
     {
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            return;
+        }
+
+        e.Handled = true;
         if (TryGetDroppedVideoPath(e, out string? path) && path is not null)
         {
-            await _viewModel.Player.OpenAsync(path);
+            Dispatcher.BeginInvoke(DispatcherPriority.Normal, () => _ = OpenDroppedVideoAsync(path));
         }
+    }
+
+    private async Task OpenDroppedVideoAsync(string path)
+    {
+        Activate();
+        Focus();
+        await _viewModel.Player.OpenAsync(path);
     }
 
     private static bool TryGetDroppedVideoPath(DragEventArgs e, out string? videoPath)
@@ -304,7 +504,7 @@ public partial class MainWindow : Window
         }
 
         string candidate = files[0];
-        if (!PlayerViewModel.IsSupportedVideoFile(candidate))
+        if (!File.Exists(candidate) || !PlayerViewModel.IsSupportedVideoFile(candidate))
         {
             return false;
         }

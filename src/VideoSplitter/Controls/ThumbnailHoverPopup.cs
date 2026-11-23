@@ -1,14 +1,27 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Interop;
 using System.Windows.Media;
 
 namespace VideoSplitter.Controls;
 
 public sealed class ThumbnailHoverPopup
 {
-    private const double VerticalCursorGap = 8.0;
+    private const double VerticalCursorGap = 10.0;
+    private const double BelowCursorGap = 18.0;
     private const double HorizontalPaddingMargin = 4.0;
+
+    private const int GwlExStyle = -20;
+    private const long WsExTransparent = 0x00000020L;
+    private const long WsExNoActivate = 0x08000000L;
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = false)]
+    private static extern nint GetWindowLongPtr(nint hWnd, int nIndex);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = false)]
+    private static extern nint SetWindowLongPtr(nint hWnd, int nIndex, nint dwNewLong);
 
     private static readonly SolidColorBrush PopupBackgroundBrush = CreateFrozenBrush(0x1A, 0x1D, 0x23);
     private static readonly SolidColorBrush PopupBorderBrush = CreateFrozenBrush(0x2E, 0x34, 0x40);
@@ -21,6 +34,8 @@ public sealed class ThumbnailHoverPopup
     private readonly Image _imageControl;
     private readonly TextBlock _timeTextBlock;
 
+    private Window? _hookedWindow;
+    private UIElement? _hookedTarget;
     private long _lastFormattedSeconds = -1;
     private bool _lastUseHours;
     private bool _lastHasImage;
@@ -32,7 +47,9 @@ public sealed class ThumbnailHoverPopup
             Width = 160,
             Stretch = Stretch.Uniform,
             Margin = new Thickness(0, 0, 0, 5),
-            Visibility = Visibility.Collapsed
+            Visibility = Visibility.Collapsed,
+            IsHitTestVisible = false,
+            Focusable = false
         };
         RenderOptions.SetBitmapScalingMode(_imageControl, BitmapScalingMode.HighQuality);
 
@@ -42,12 +59,16 @@ public sealed class ThumbnailHoverPopup
             FontSize = 11,
             Foreground = TimeTextBrush,
             HorizontalAlignment = HorizontalAlignment.Center,
-            Text = "00:00"
+            Text = "00:00",
+            IsHitTestVisible = false,
+            Focusable = false
         };
 
         var stack = new StackPanel
         {
-            Orientation = Orientation.Vertical
+            Orientation = Orientation.Vertical,
+            IsHitTestVisible = false,
+            Focusable = false
         };
         stack.Children.Add(_imageControl);
         stack.Children.Add(_timeTextBlock);
@@ -60,17 +81,24 @@ public sealed class ThumbnailHoverPopup
             CornerRadius = new CornerRadius(6),
             Padding = new Thickness(6),
             SnapsToDevicePixels = true,
+            IsHitTestVisible = false,
+            Focusable = false,
             Child = stack
         };
 
+        // StaysOpen = true evite la capture souris automatique de WPF (cause de tremblement/blocage de clics).
         _popup = new Popup
         {
             AllowsTransparency = true,
             IsHitTestVisible = false,
-            StaysOpen = false,
+            Focusable = false,
+            StaysOpen = true,
             Placement = PlacementMode.Relative,
             Child = _container
         };
+
+        _popup.Opened += OnPopupOpened;
+        _popup.Closed += OnPopupClosed;
     }
 
     public void Update(UIElement target, Point mousePosition, TimeSpan time, ImageSource? image)
@@ -107,7 +135,7 @@ public sealed class ThumbnailHoverPopup
             _timeTextBlock.Text = FormatTime(time, useHours);
         }
 
-        if (_popup.PlacementTarget != target)
+        if (!ReferenceEquals(_popup.PlacementTarget, target))
         {
             _popup.PlacementTarget = target;
         }
@@ -123,13 +151,14 @@ public sealed class ThumbnailHoverPopup
         double offsetX = mousePosition.X - (popupWidth / 2.0);
         double offsetY = mousePosition.Y - popupHeight - VerticalCursorGap;
 
-        ClampOffsetsToWindowAndScreen(target, popupWidth, popupHeight, ref offsetX, ref offsetY);
+        ClampOffsetsToWindowAndScreen(target, mousePosition, popupWidth, popupHeight, ref offsetX, ref offsetY);
 
         _popup.HorizontalOffset = offsetX;
         _popup.VerticalOffset = offsetY;
 
         if (!_popup.IsOpen)
         {
+            AttachDismissHooks(target);
             _popup.IsOpen = true;
         }
     }
@@ -140,10 +169,84 @@ public sealed class ThumbnailHoverPopup
         {
             _popup.IsOpen = false;
         }
+
+        DetachDismissHooks();
+    }
+
+    private void OnPopupOpened(object? sender, EventArgs e)
+    {
+        if (PresentationSource.FromVisual(_container) is HwndSource { Handle: var hwnd } && hwnd != IntPtr.Zero)
+        {
+            nint exStyle = GetWindowLongPtr(hwnd, GwlExStyle);
+            nint updatedStyle = (nint)((long)exStyle | WsExTransparent | WsExNoActivate);
+            if (updatedStyle != exStyle)
+            {
+                SetWindowLongPtr(hwnd, GwlExStyle, updatedStyle);
+            }
+        }
+    }
+
+    private void OnPopupClosed(object? sender, EventArgs e)
+    {
+        DetachDismissHooks();
+    }
+
+    private void AttachDismissHooks(UIElement target)
+    {
+        if (!ReferenceEquals(_hookedTarget, target))
+        {
+            DetachDismissHooks();
+            _hookedTarget = target;
+            _hookedTarget.IsVisibleChanged += OnTargetVisibilityChanged;
+
+            _hookedWindow = Window.GetWindow(target);
+            if (_hookedWindow is not null)
+            {
+                _hookedWindow.Deactivated += OnOwnerWindowDismissSignal;
+                _hookedWindow.LocationChanged += OnOwnerWindowDismissSignal;
+                _hookedWindow.SizeChanged += OnOwnerWindowSizeChanged;
+            }
+        }
+    }
+
+    private void DetachDismissHooks()
+    {
+        if (_hookedTarget is not null)
+        {
+            _hookedTarget.IsVisibleChanged -= OnTargetVisibilityChanged;
+            _hookedTarget = null;
+        }
+
+        if (_hookedWindow is not null)
+        {
+            _hookedWindow.Deactivated -= OnOwnerWindowDismissSignal;
+            _hookedWindow.LocationChanged -= OnOwnerWindowDismissSignal;
+            _hookedWindow.SizeChanged -= OnOwnerWindowSizeChanged;
+            _hookedWindow = null;
+        }
+    }
+
+    private void OnTargetVisibilityChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (e.NewValue is false)
+        {
+            Hide();
+        }
+    }
+
+    private void OnOwnerWindowDismissSignal(object? sender, EventArgs e)
+    {
+        Hide();
+    }
+
+    private void OnOwnerWindowSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        Hide();
     }
 
     private static void ClampOffsetsToWindowAndScreen(
         UIElement target,
+        Point mousePosition,
         double popupWidth,
         double popupHeight,
         ref double offsetX,
@@ -178,7 +281,9 @@ public sealed class ThumbnailHoverPopup
             double minScreenY = workArea.Top - screenOriginDip.Y + HorizontalPaddingMargin;
             if (offsetY < minScreenY)
             {
-                offsetY = minScreenY;
+                double belowY = mousePosition.Y + BelowCursorGap;
+                double maxScreenY = workArea.Bottom - screenOriginDip.Y - popupHeight - HorizontalPaddingMargin;
+                offsetY = belowY <= maxScreenY ? belowY : minScreenY;
             }
         }
     }
