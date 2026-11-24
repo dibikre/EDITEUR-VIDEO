@@ -273,6 +273,7 @@ public partial class MainWindow : Window
 
         // Detacher le lecteur avant la liberation du conteneur DI dans App.OnDesktopExit.
         LecteurVideoView.MediaPlayer = null;
+        _viewModel.Settings.SaveNow();
         _logger.Info("Fenetre principale fermee.");
     }
 

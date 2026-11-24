@@ -6,6 +6,8 @@ namespace VideoSplitter.Views;
 
 public partial class SettingsDialog : Window
 {
+    private readonly SettingsViewModel? _viewModel;
+
     public SettingsDialog()
     {
         InitializeComponent();
@@ -14,6 +16,7 @@ public partial class SettingsDialog : Window
     public SettingsDialog(SettingsViewModel viewModel, bool isExporting)
     {
         InitializeComponent();
+        _viewModel = viewModel;
         DataContext = viewModel;
 
         if (isExporting)
@@ -23,10 +26,19 @@ public partial class SettingsDialog : Window
             FileNamePatternSectionBorder.IsEnabled = false;
             ExportLockHintText.IsVisible = true;
         }
+
+        Closed += OnDialogClosed;
+    }
+
+    private void OnDialogClosed(object? sender, EventArgs e)
+    {
+        Closed -= OnDialogClosed;
+        _viewModel?.SaveNow();
     }
 
     private void OnCloseClick(object? sender, RoutedEventArgs e)
     {
+        _viewModel?.SaveNow();
         Close();
     }
 }

@@ -733,6 +733,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
         long seekTarget = Interlocked.Exchange(ref _pendingSeekTargetMs, -1);
         bool targetMute = IsMuted;
+        float targetRate = Speed > 0 ? (float)Speed : 1.0f;
         _ = Task.Run(() =>
         {
             if (_disposed || Volatile.Read(ref _openGeneration) != generation)
@@ -747,6 +748,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
 
             _mediaPlayer.SetPause(true);
             _mediaPlayer.Mute = targetMute;
+            _mediaPlayer.SetRate(targetRate);
         });
 
         TimeSpan uiPos = seekTarget >= 0 ? TimeSpan.FromMilliseconds(seekTarget) : TimeSpan.Zero;

@@ -73,6 +73,7 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
     private MediaInfo? _currentMedia;
     private OutputFolderMode _outputFolderMode = OutputFolderMode.SameAsSource;
     private string _customOutputFolder = string.Empty;
+    private EncoderSelection? _preferredEncoderToRestore;
     private bool _hasEnabledSegments;
     private bool _disposed;
 
@@ -232,6 +233,14 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
         _reloadAfterOverwriteAsync = reloadAfterOverwriteAsync;
     }
 
+    public void SetInitialEncoder(EncoderSelection encoder)
+    {
+        _preferredEncoderToRestore = encoder;
+        SelectedEncoder = encoder;
+        // Reappliquer la preference apres SetInitialEncoder car OnSelectedEncoderChanged la reinitialise.
+        _preferredEncoderToRestore = encoder;
+    }
+
     public void ConfigureOutputLocation(OutputFolderMode folderMode, string customFolder)
     {
         _outputFolderMode = folderMode;
@@ -368,6 +377,11 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
         {
             Crf = clamped;
         }
+    }
+
+    partial void OnSelectedEncoderChanged(EncoderSelection value)
+    {
+        _preferredEncoderToRestore = null;
     }
 
     [RelayCommand(CanExecute = nameof(CanStartExport))]
@@ -1335,6 +1349,21 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
         }
 
         EncoderStatus = $"Encodeurs : {string.Join(", ", names)}";
+
+        EncoderSelection targetToValidate = _preferredEncoderToRestore ?? SelectedEncoder;
+        _preferredEncoderToRestore = null;
+
+        bool isTargetAvailable = false;
+        foreach (EncoderOptionItem option in EncoderOptions)
+        {
+            if (option.Kind == targetToValidate && option.IsEnabled)
+            {
+                isTargetAvailable = true;
+                break;
+            }
+        }
+
+        SelectedEncoder = isTargetAvailable ? targetToValidate : EncoderSelection.Auto;
     }
 
     private (MediaInfo? Media, IReadOnlyList<Segment> Segments, IReadOnlyList<double> Keyframes) GetSourceSnapshot()

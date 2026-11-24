@@ -37,6 +37,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _logger = logger;
 
         Export.Mode = Settings.ExportMode;
+        Export.Crf = Settings.Crf;
+        Export.SetInitialEncoder(Settings.SelectedEncoder);
         Export.FileNamePattern = Settings.FileNamePattern;
         Export.ConfigureOutputLocation(Settings.OutputFolderMode, Settings.CustomOutputFolder);
         Export.ConfigureOverwriteHooks(
@@ -54,6 +56,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                 }
             });
 
+        Edit.SnapToKeyframes = Settings.SnapToKeyframes;
+        Timeline.FollowPlayback = Settings.FollowPlayback;
+        Player.Volume = Settings.Volume;
+        Player.IsMuted = Settings.IsMuted;
+        Player.Speed = Settings.PlaybackSpeed;
+
         Edit.ConfigurePlaybackBridge(
             () => (Player.Position, Timeline.PixelsPerSecond),
             target => Player.SeekTo(target));
@@ -61,6 +69,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         Player.BeforeOpenConfirmAsync = ConfirmAndAbortExportBeforeOpenAsync;
         Player.PropertyChanged += OnPlayerPropertyChanged;
         Edit.PropertyChanged += OnEditPropertyChanged;
+        Timeline.PropertyChanged += OnTimelinePropertyChanged;
+        Export.PropertyChanged += OnExportPropertyChanged;
         Settings.PropertyChanged += OnSettingsPropertyChanged;
 
         _logger.Info("MainViewModel initialise.");
@@ -107,6 +117,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                 }
             }
         }
+        else if (e.PropertyName is nameof(PlayerViewModel.Volume) or nameof(PlayerViewModel.IsMuted) or nameof(PlayerViewModel.Speed))
+        {
+            Settings.UpdatePlayerPreferences(Player.Volume, Player.IsMuted, Player.Speed);
+        }
     }
 
     private void OnEditPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -118,6 +132,26 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             {
                 Export.ClearTransientErrorState();
             }
+        }
+        else if (e.PropertyName == nameof(EditViewModel.SnapToKeyframes))
+        {
+            Settings.UpdateSnapToKeyframes(Edit.SnapToKeyframes);
+        }
+    }
+
+    private void OnTimelinePropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(TimelineViewModel.FollowPlayback))
+        {
+            Settings.UpdateFollowPlayback(Timeline.FollowPlayback);
+        }
+    }
+
+    private void OnExportPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(ExportViewModel.Crf) or nameof(ExportViewModel.SelectedEncoder))
+        {
+            Settings.UpdateExportTuning(Export.Crf, Export.SelectedEncoder);
         }
     }
 
@@ -141,6 +175,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         Player.PropertyChanged -= OnPlayerPropertyChanged;
         Edit.PropertyChanged -= OnEditPropertyChanged;
+        Timeline.PropertyChanged -= OnTimelinePropertyChanged;
+        Export.PropertyChanged -= OnExportPropertyChanged;
         Settings.PropertyChanged -= OnSettingsPropertyChanged;
         Player.BeforeOpenConfirmAsync = null;
     }
