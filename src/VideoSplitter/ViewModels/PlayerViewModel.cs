@@ -57,7 +57,8 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         nameof(SkipBackward5sCommand),
         nameof(GoToStartCommand),
         nameof(GoToEndCommand),
-        nameof(ToggleMuteCommand))]
+        nameof(ToggleMuteCommand),
+        nameof(OpenInExternalPlayerCommand))]
     private bool _isMediaLoaded;
 
     [ObservableProperty]
@@ -561,6 +562,30 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
     private void ToggleMute()
     {
         IsMuted = !IsMuted;
+    }
+
+    public void PauseIfPlaying()
+    {
+        if (_mediaPlayer.IsPlaying)
+        {
+            _mediaPlayer.SetPause(true);
+        }
+    }
+
+    [RelayCommand(CanExecute = nameof(IsMediaLoaded))]
+    private void OpenInExternalPlayer()
+    {
+        if (!IsMediaLoaded || MediaInfo is not { } info)
+        {
+            return;
+        }
+
+        PauseIfPlaying();
+        if (!ExternalPlayerLauncher.TryOpenInDefaultPlayer(info.Path, _logger, out string? errorMessage)
+            && errorMessage is not null)
+        {
+            ErrorOccurred?.Invoke(this, errorMessage);
+        }
     }
 
     public void SeekTo(TimeSpan target)

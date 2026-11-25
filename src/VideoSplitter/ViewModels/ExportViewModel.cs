@@ -61,6 +61,8 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
     private Func<int, bool, bool, Task<FastCutWarningChoice>>? _fastCutWarningPrompt;
     private Func<IReadOnlyList<string>, Task<ConflictPolicy?>>? _conflictPrompt;
     private Func<string, Task<bool>>? _confirmContinuePrompt;
+    private Func<string, Task<bool>>? _externalPlaybackPrompt;
+    private Action? _pauseInternalPlayerAction;
     private Func<string, Task>? _errorPrompt;
     private Func<string, Task>? _copyTextAction;
     private Func<Task>? _prepareOverwriteReleaseAsync;
@@ -231,6 +233,14 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
     {
         _prepareOverwriteReleaseAsync = prepareOverwriteReleaseAsync;
         _reloadAfterOverwriteAsync = reloadAfterOverwriteAsync;
+    }
+
+    public void ConfigureExternalPlayback(
+        Func<string, Task<bool>> externalPlaybackPrompt,
+        Action pauseInternalPlayerAction)
+    {
+        _externalPlaybackPrompt = externalPlaybackPrompt;
+        _pauseInternalPlayerAction = pauseInternalPlayerAction;
     }
 
     public void SetInitialEncoder(EncoderSelection encoder)
@@ -856,6 +866,12 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
         {
             await _errorPrompt.Invoke(replaceErrorMessage);
         }
+        else if (!_disposed
+            && replaceErrorMessage is null
+            && _lastExportedFiles.FirstOrDefault(File.Exists) is { } exportedVideoPath)
+        {
+            await PromptExternalPlaybackIfRequestedAsync(exportedVideoPath, 1);
+        }
     }
 
     private async Task ReplaceSourceFileAsync(string stagingPath, string sourcePath, string finalOverwritePath)
@@ -929,6 +945,33 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
 
     private bool CanOpenOutputFolder()
         => !string.IsNullOrWhiteSpace(OutputFolder) && Directory.Exists(OutputFolder);
+
+    private async Task PromptExternalPlaybackIfRequestedAsync(string targetPath, int exportedFileCount)
+    {
+        if (_disposed || _externalPlaybackPrompt is null || !File.Exists(targetPath))
+        {
+            return;
+        }
+
+        string fileName = Path.GetFileName(targetPath);
+        string promptMessage = exportedFileCount <= 1
+            ? $"Traitement terminé :\n{fileName}\n\nVoulez-vous ouvrir la vidéo dans le lecteur externe par défaut de Windows ?"
+            : $"Traitement terminé ({exportedFileCount} vidéos exportées).\n\nVoulez-vous ouvrir « {fileName} » dans le lecteur externe par défaut de Windows ?";
+
+        bool openExternal = await _externalPlaybackPrompt.Invoke(promptMessage);
+        if (!openExternal || _disposed)
+        {
+            return;
+        }
+
+        _pauseInternalPlayerAction?.Invoke();
+        if (!ExternalPlayerLauncher.TryOpenInDefaultPlayer(targetPath, _logger, out string? errorMessage)
+            && errorMessage is not null
+            && _errorPrompt is not null)
+        {
+            await _errorPrompt.Invoke(errorMessage);
+        }
+    }
 
     [RelayCommand]
     private async Task CopyItemTechnicalDetailsAsync(ExportItemViewModel? item)
@@ -1081,6 +1124,11 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
             });
         }
 
+        int successCount = 0;
+        int errorCount = 0;
+        int skippedCount = 0;
+        int cancelledCount = 0;
+
         try
         {
             IReadOnlyList<ExportResult> results = await _exportQueue.RunAsync(
@@ -1092,11 +1140,6 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
                 ct);
 
             batchStopwatch.Stop();
-
-            int successCount = 0;
-            int errorCount = 0;
-            int skippedCount = 0;
-            int cancelledCount = 0;
 
             for (int i = 0; i < results.Count; i++)
             {
@@ -1168,6 +1211,15 @@ public sealed partial class ExportViewModel : ObservableObject, IDisposable
             _exportCts?.Dispose();
             _exportCts = null;
             OpenOutputFolderCommand.NotifyCanExecuteChanged();
+        }
+
+        if (!_disposed && successCount > 0 && cancelledCount == 0)
+        {
+            List<string> existingFiles = _lastExportedFiles.Where(File.Exists).ToList();
+            if (existingFiles.Count > 0)
+            {
+                await PromptExternalPlaybackIfRequestedAsync(existingFiles[0], existingFiles.Count);
+            }
         }
     }
 

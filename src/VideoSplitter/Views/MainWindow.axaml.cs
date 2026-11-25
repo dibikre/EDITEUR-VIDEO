@@ -130,6 +130,11 @@ public partial class MainWindow : Window
                     await Clipboard.SetTextAsync(text);
                 }
             });
+
+        _viewModel.Export.ConfigureExternalPlayback(
+            externalPlaybackPrompt: message =>
+                ShowDialogMessageAsync("VideoSplitter — Lecture externe", message, isConfirmation: true),
+            pauseInternalPlayerAction: () => _viewModel.Player.PauseIfPlaying());
     }
 
     private async void OnOpenSettingsClick(object? sender, RoutedEventArgs e)
